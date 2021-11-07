@@ -109,7 +109,7 @@ class Detector(object):
 
 def run(dataset, save_path, height=400):
     config = {
-      "ckpt_name": "experiments/decay/34epoch",
+      "ckpt_name": "experiments/default/34epoch",
       "use_bn": True,
       "cls_threshold": 0.5,
       "nms_iou_threshold": 0.1,
@@ -171,9 +171,11 @@ def run(dataset, save_path, height=400):
 
 def make_kitti_video():
      
-    basedir = '/mnt/ssd2/od/KITTI/raw'
+    #basedir = '/mnt/ssd2/od/KITTI/raw'
+    basedir = "/Volumes/T7 Touch/KITTI/city/"
     date = '2011_09_26'
-    drive = '0035'
+    #drive = '0035'
+    drive = '0001'
     dataset = pykitti.raw(basedir, date, drive)
    
     videoname = "detection_{}_{}.avi".format(date, drive)
@@ -182,7 +184,8 @@ def make_kitti_video():
      
 def make_test_video():
 
-    basedir = '/mnt/ssd2/od/testset'
+    #basedir = '/mnt/ssd2/od/testset'
+    basedir = "/Volumes/T7 Touch/KITTI/city/"
     date = '_2018-10-30-15-25-07'
     import testset
     dataset = testset.TestSet(basedir, date)
@@ -193,4 +196,4 @@ def make_test_video():
 
 
 if __name__ == '__main__':
-    make_test_video()
+    make_kitti_video()
