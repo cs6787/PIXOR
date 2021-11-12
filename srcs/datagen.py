@@ -11,8 +11,9 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 #KITTI_PATH = '/home/autoronto/Kitti/object'
-KITTI_PATH = '/mnt/ssd2/od/KITTI'
+KITTI_PATH = '/Volumes/T7 Touch/KITTI'
 #KITTI_PATH = 'KITTI'
+
 
 class KITTI(Dataset):
 
@@ -30,13 +31,13 @@ class KITTI(Dataset):
     target_mean = np.array([0.008, 0.001, 0.202, 0.2, 0.43, 1.368])
     target_std_dev = np.array([0.866, 0.5, 0.954, 0.668, 0.09, 0.111])
 
-
-    def __init__(self, frame_range = 10000, use_npy=False, train=True):
+    def __init__(self, frame_range=10000, use_npy=False, train=True):
         self.frame_range = frame_range
         self.velo = []
         self.use_npy = use_npy
-        self.LidarLib = ctypes.cdll.LoadLibrary('preprocess/LidarPreprocess.so')
-        self.image_sets = self.load_imageset(train) # names
+        self.LidarLib = ctypes.cdll.LoadLibrary(
+            'preprocess/LidarPreprocess.so')
+        self.image_sets = self.load_imageset(train)  # names
 
     def __len__(self):
         return len(self.image_sets)
@@ -61,18 +62,20 @@ class KITTI(Dataset):
         reg_map = label_map[..., 1:]
 
         index = np.nonzero(cls_map)
-        reg_map[index] = (reg_map[index] - self.target_mean)/self.target_std_dev
-
+        reg_map[index] = (reg_map[index] - self.target_mean) / \
+            self.target_std_dev
 
     def load_imageset(self, train):
         path = KITTI_PATH
+
         if train:
             path = os.path.join(path, "train.txt")
         else:
             path = os.path.join(path, "val.txt")
 
         with open(path, 'r') as f:
-            lines = f.readlines() # get rid of \n symbol
+            lines = f.readlines()  # get rid of \n symbol
+
             names = []
             for line in lines[:-1]:
                 if int(line[:-1]) < self.frame_range:
@@ -86,14 +89,14 @@ class KITTI(Dataset):
             print("There are {} images in txt file".format(len(names)))
 
             return names
-    
+
     def interpret_kitti_label(self, bbox):
         w, h, l, y, z, x, yaw = bbox[8:15]
         y = -y
         yaw = - (yaw + np.pi / 2)
-        
+
         return x, y, w, l, yaw
-    
+
     def interpret_custom_label(self, bbox):
         w, l, x, y, yaw = bbox
         return x, y, w, l, yaw
@@ -108,9 +111,9 @@ class KITTI(Dataset):
         # y facing to the left of driver
 
         yaw = -(yaw + np.pi / 2)
-        
+
         #x, y, w, l, yaw = self.interpret_kitti_label(bbox)
-        
+
         bev_corners = np.zeros((4, 2), dtype=np.float32)
         # rear left
         bev_corners[0, 0] = x - l/2 * np.cos(yaw) - w/2 * np.sin(yaw)
@@ -132,12 +135,12 @@ class KITTI(Dataset):
 
         return bev_corners, reg_target
 
-
     def update_label_map(self, map, bev_corners, reg_target):
-        label_corners = (bev_corners / 4 ) / 0.1
+        label_corners = (bev_corners / 4) / 0.1
         label_corners[:, 1] += self.geometry['label_shape'][0] / 2
 
-        points = get_points_in_a_rotated_box(label_corners, self.geometry['label_shape'])
+        points = get_points_in_a_rotated_box(
+            label_corners, self.geometry['label_shape'])
 
         for p in points:
             label_x = p[0]
@@ -151,7 +154,6 @@ class KITTI(Dataset):
 
             map[label_y, label_x, 0] = 1.0
             map[label_y, label_x, 1:7] = actual_reg_target
-
 
     def get_label(self, index):
         '''
@@ -170,11 +172,12 @@ class KITTI(Dataset):
         f_name = (6-len(index)) * '0' + index + '.txt'
         label_path = os.path.join(KITTI_PATH, 'training', 'label_2', f_name)
 
-        object_list = {'Car': 1, 'Truck':0, 'DontCare':0, 'Van':0, 'Tram':0}
+        object_list = {'Car': 1, 'Truck': 0,
+                       'DontCare': 0, 'Van': 0, 'Tram': 0}
         label_map = np.zeros(self.geometry['label_shape'], dtype=np.float32)
         label_list = []
         with open(label_path, 'r') as f:
-            lines = f.readlines() # get rid of \n symbol
+            lines = f.readlines()  # get rid of \n symbol
             for line in lines:
                 bbox = []
                 entry = line.split(' ')
@@ -206,7 +209,7 @@ class KITTI(Dataset):
             c_data = ctypes.c_void_p(scan.ctypes.data)
             self.LidarLib.createTopViewMaps(c_data, c_name)
             #scan = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
-            
+
         return scan
 
     def load_velo(self):
@@ -216,7 +219,8 @@ class KITTI(Dataset):
         velo_files = []
         for file in self.image_sets:
             file = '{}.bin'.format(file)
-            velo_files.append(os.path.join(KITTI_PATH, 'training', 'velodyne', file))
+            velo_files.append(os.path.join(
+                KITTI_PATH, 'training', 'velodyne', file))
 
         print('Found ' + str(len(velo_files)) + ' Velodyne scans...')
         # Read the Velodyne scans. Each point is [x,y,z,reflectance]
@@ -242,8 +246,10 @@ class KITTI(Dataset):
         return velo[indices, :]
 
     def lidar_preprocess(self, scan):
-        velo_processed = np.zeros(self.geometry['input_shape'], dtype=np.float32)
-        intensity_map_count = np.zeros((velo_processed.shape[0], velo_processed.shape[1]))
+        velo_processed = np.zeros(
+            self.geometry['input_shape'], dtype=np.float32)
+        intensity_map_count = np.zeros(
+            (velo_processed.shape[0], velo_processed.shape[1]))
         velo = self.passthrough(scan)
         for i in range(velo.shape[0]):
             x = int((velo[i, 1]-self.geometry['L1']) / 0.1)
@@ -262,12 +268,14 @@ def get_data_loader(batch_size, use_npy, geometry=None, frame_range=10000):
     if geometry is not None:
         train_dataset.geometry = geometry
     train_dataset.load_velo()
-    train_data_loader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=3)
+    train_data_loader = DataLoader(
+        train_dataset, shuffle=True, batch_size=batch_size, num_workers=3)
     val_dataset = KITTI(frame_range, use_npy=use_npy, train=False)
     if geometry is not None:
         val_dataset.geometry = geometry
     val_dataset.load_velo()
-    val_data_loader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=8)
+    val_data_loader = DataLoader(
+        val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=3)
 
     print("------------------------------------------------------------------")
     return train_data_loader, val_data_loader
@@ -282,7 +290,7 @@ def test0():
     scan = k.load_velo_scan(id)
     processed_v = k.lidar_preprocess(scan)
     label_map, label_list = k.get_label(id)
-    print('time taken: %gs' %(time.time()-tstart))
+    print('time taken: %gs' % (time.time()-tstart))
     plot_bev(processed_v, label_list)
     plot_label_map(label_map[:, :, 6])
 
@@ -306,6 +314,7 @@ def find_reg_target_var_and_mean():
     print("Stds", stds)
     return means, stds
 
+
 def preprocess_to_npy(train=True):
     k = KITTI(train=train)
     k.load_velo()
@@ -316,6 +325,7 @@ def preprocess_to_npy(train=True):
         np.save(path, scan)
         print('Saved ', path)
     return
+
 
 def test():
     # npy average time 0.31s
@@ -334,12 +344,12 @@ def test():
         #print("Label Map shape", label_map.shape)
         if i == 20:
             break
-    print("average preprocess time per image", np.mean(times)/batch_size)    
+    print("average preprocess time per image", np.mean(times)/batch_size)
 
     print("Finish testing train dataloader")
 
 
-if __name__=="__main__":
+if __name__ == "__main__":
     test()
-    #preprocess_to_npy(True)
-    #preprocess_to_npy(False)
+    # preprocess_to_npy(True)
+    # preprocess_to_npy(False)

@@ -7,3 +7,5 @@
 .DS_STORE
 *.pyc
 *cache*
+/srcs/logs
+/srcs/preprocess/LidarPreprocess.so

@@ -28,8 +28,10 @@ def build_model(config, device, train=True):
     if not train:
         return net, loss_fn
 
-    optimizer = torch.optim.SGD(net.parameters(), lr=config['learning_rate'], momentum=config['momentum'], weight_decay=config['weight_decay'])
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=config['lr_decay_at'], gamma=0.1)
+    optimizer = torch.optim.SGD(net.parameters(
+    ), lr=config['learning_rate'], momentum=config['momentum'], weight_decay=config['weight_decay'])
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=config['lr_decay_at'], gamma=0.1)
 
     return net, loss_fn, optimizer, scheduler
 
@@ -40,7 +42,7 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
         net.module.set_decode(True)
     else:
         net.set_decode(True)
-    
+
     cls_loss = 0
     loc_loss = 0
     all_scores = []
@@ -64,15 +66,16 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             t_fwd += time.time() - tac
             loss, cls, loc = loss_fn(predictions, label_map)
             cls_loss += cls
-            loc_loss += loc 
+            loc_loss += loc
             t_fwd += (time.time() - tic)
-            
+
             toc = time.time()
             # Parallel post-processing
             predictions = list(torch.split(predictions.cpu(), 1, dim=0))
             batch_size = len(predictions)
-            with Pool (processes=3) as pool:
-                preds_filtered = pool.starmap(filter_pred, [(config, pred) for pred in predictions])
+            with Pool(processes=3) as pool:
+                preds_filtered = pool.starmap(
+                    filter_pred, [(config, pred) for pred in predictions])
             t_nms += (time.time() - toc)
             args = []
             for j in range(batch_size):
@@ -90,13 +93,13 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
                 args.append(arg)
 
             # Parallel compute matchesi
-            
-            with Pool (processes=3) as pool:
+
+            with Pool(processes=3) as pool:
                 matches = pool.starmap(compute_matches, args)
-            
+
             for j in range(batch_size):
                 all_matches.extend(list(matches[j][1]))
-            
+
             #print(time.time() -tic)
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
@@ -104,12 +107,13 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     all_matches = all_matches[sort_ids[::-1]]
 
     metrics = {}
-    AP, precisions, recalls, precision, recall = compute_ap(all_matches, gts, preds)
+    AP, precisions, recalls, precision, recall = compute_ap(
+        all_matches, gts, preds)
     metrics['AP'] = AP
     metrics['Precision'] = precision
     metrics['Recall'] = recall
     metrics['Forward Pass Time'] = t_fwd/len(loader.dataset)
-    metrics['Postprocess Time'] = t_nms/len(loader.dataset) 
+    metrics['Postprocess Time'] = t_nms/len(loader.dataset)
 
     cls_loss = cls_loss / len(loader)
     loc_loss = loc_loss / len(loader)
@@ -146,7 +150,8 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
         for image_id in img_list:
             #tic = time.time()
             num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = \
-                eval_one(net, loss_fn, config, loader, image_id, device, plot=False)
+                eval_one(net, loss_fn, config, loader,
+                         image_id, device, plot=False)
             gts += num_gt
             preds += num_pred
             loss_sum += loss
@@ -159,14 +164,15 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
             if image_id in log_img_list:
                 log_images.append(pred_image)
             #print(time.time() - tic)
-            
+
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
     sort_ids = np.argsort(all_scores)
     all_matches = all_matches[sort_ids[::-1]]
 
     metrics = {}
-    AP, precisions, recalls, precision, recall = compute_ap(all_matches, gts, preds)
+    AP, precisions, recalls, precision, recall = compute_ap(
+        all_matches, gts, preds)
     metrics['AP'] = AP
     metrics['Precision'] = precision
     metrics['Recall'] = recall
@@ -183,9 +189,10 @@ def train(exp_name, device):
 
     # Dataset and DataLoader
     train_data_loader, test_data_loader = get_data_loader(batch_size, config['use_npy'],
-                                        geometry=config['geometry'], frame_range=config['frame_range'])
+                                                          geometry=config['geometry'], frame_range=config['frame_range'])
     # Model
-    net, loss_fn, optimizer, scheduler = build_model(config, device, train=True)
+    net, loss_fn, optimizer, scheduler = build_model(
+        config, device, train=True)
 
     # Tensorboard Logger
     train_logger = get_logger(config, 'train')
@@ -194,9 +201,11 @@ def train(exp_name, device):
     if config['resume_training']:
         saved_ckpt_path = get_model_name(config)
         if config['mGPUs']:
-            net.module.load_state_dict(torch.load(saved_ckpt_path, map_location=device))
+            net.module.load_state_dict(torch.load(
+                saved_ckpt_path, map_location=device))
         else:
-            net.load_state_dict(torch.load(saved_ckpt_path, map_location=device))
+            net.load_state_dict(torch.load(
+                saved_ckpt_path, map_location=device))
         print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
         st_epoch = config['resume_from']
     else:
@@ -208,8 +217,9 @@ def train(exp_name, device):
     cls_loss = 0
     loc_loss = 0
     for epoch in range(st_epoch, max_epochs):
-        start_time = time.time()    
-        
+
+        start_time = time.time()
+
         train_loss = 0
 
         net.train()
@@ -220,8 +230,8 @@ def train(exp_name, device):
         scheduler.step()
 
         for input, label_map, image_id in train_data_loader:
-            
-            tic = time.time()#print('step', step)
+
+            tic = time.time()  # print('step', step)
             input = input.to(device)
             label_map = label_map.to(device)
             optimizer.zero_grad()
@@ -243,13 +253,13 @@ def train(exp_name, device):
                 cls_loss = 0
                 loc_loss = 0
 
-                #for tag, value in net.named_parameters():
+                # for tag, value in net.named_parameters():
                 #    tag = tag.replace('.', '/')
                 #    train_logger.histo_summary(tag, value.data.cpu().numpy(), step)
                 #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
 
             step += 1
-            #print(time.time() - tic)            
+            #print(time.time() - tic)
 
         # Record Training Loss
         train_loss = train_loss / len(train_data_loader)
@@ -258,9 +268,10 @@ def train(exp_name, device):
             epoch + 1, time.time() - start_time, train_loss))
 
         # Run Validation
-        if (epoch +1) % 2 == 0:
+        if (epoch + 1) % 2 == 0:
             tic = time.time()
-            val_metrics, _, _, log_images = eval_batch(config, net, loss_fn, test_data_loader, device)
+            val_metrics, _, _, log_images = eval_batch(
+                config, net, loss_fn, test_data_loader, device)
             for tag, value in val_metrics.items():
                 val_logger.scalar_summary(tag, value, epoch + 1)
             val_logger.image_summary('Predictions', log_images, epoch + 1)
@@ -284,7 +295,8 @@ def eval_one(net, loss_fn, config, loader, image_id, device, plot=False, verbose
     input = input.to(device)
     label_map, label_list = loader.dataset.get_label(image_id)
     loader.dataset.reg_target_transform(label_map)
-    label_map = torch.from_numpy(label_map).permute(2, 0, 1).unsqueeze_(0).to(device)
+    label_map = torch.from_numpy(label_map).permute(
+        2, 0, 1).unsqueeze_(0).to(device)
 
     # Forward Pass
     t_start = time.time()
@@ -298,7 +310,6 @@ def eval_one(net, loss_fn, config, loader, image_id, device, plot=False, verbose
     if verbose:
         print("Forward pass time", t_forward)
 
-
     # Filter Predictions
     t_start = time.time()
     corners, scores = filter_pred(config, pred)
@@ -309,7 +320,7 @@ def eval_one(net, loss_fn, config, loader, image_id, device, plot=False, verbose
 
     gt_boxes = np.array(label_list)
     gt_match, pred_match, overlaps = compute_matches(gt_boxes,
-                                        corners, scores, iou_threshold=0.5)
+                                                     corners, scores, iou_threshold=0.5)
 
     num_gt = len(label_list)
     num_pred = len(scores)
@@ -336,19 +347,23 @@ def experiment(exp_name, device, eval_range='all', plot=True):
     train_loader, val_loader = get_data_loader(config['batch_size'], config['use_npy'], geometry=config['geometry'],
                                                frame_range=config['frame_range'])
 
-    #Train Set
-    train_metrics, train_precisions, train_recalls, _ = eval_batch(config, net, loss_fn, train_loader, device, eval_range)
+    # Train Set
+    train_metrics, train_precisions, train_recalls, _ = eval_batch(
+        config, net, loss_fn, train_loader, device, eval_range)
     print("Training mAP", train_metrics['AP'])
     fig_name = "PRCurve_train_" + config['name']
     legend = "AP={:.1%} @IOU=0.5".format(train_metrics['AP'])
     plot_pr_curve(train_precisions, train_recalls, legend, name=fig_name)
 
     # Val Set
-    val_metrics, val_precisions, val_recalls, _ = eval_batch(config, net, loss_fn, val_loader, device, eval_range)
+    val_metrics, val_precisions, val_recalls, _ = eval_batch(
+        config, net, loss_fn, val_loader, device, eval_range)
 
     print("Validation mAP", val_metrics['AP'])
-    print("Net Fwd Pass Time on average {:.4f}s".format(val_metrics['Forward Pass Time']))
-    print("Nms Time on average {:.4f}s".format(val_metrics['Postprocess Time']))
+    print("Net Fwd Pass Time on average {:.4f}s".format(
+        val_metrics['Forward Pass Time']))
+    print("Nms Time on average {:.4f}s".format(
+        val_metrics['Postprocess Time']))
 
     fig_name = "PRCurve_val_" + config['name']
     legend = "AP={:.1%} @IOU=0.5".format(val_metrics['AP'])
@@ -358,7 +373,8 @@ def experiment(exp_name, device, eval_range='all', plot=True):
 def test(exp_name, device, image_id):
     config, _, _, _ = load_config(exp_name)
     net, loss_fn = build_model(config, device, train=False)
-    net.load_state_dict(torch.load(get_model_name(config), map_location=device))
+    net.load_state_dict(torch.load(
+        get_model_name(config), map_location=device))
     net.set_decode(True)
     train_loader, val_loader = get_data_loader(1, config['use_npy'], geometry=config['geometry'],
                                                frame_range=config['frame_range'])
@@ -366,7 +382,8 @@ def test(exp_name, device, image_id):
 
     with torch.no_grad():
         num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = \
-            eval_one(net, loss_fn, config, train_loader, image_id, device, plot=True)
+            eval_one(net, loss_fn, config, train_loader,
+                     image_id, device, plot=True)
 
         TP = (pred_match != -1).sum()
         print("Loss: {:.4f}".format(loss))
@@ -375,29 +392,31 @@ def test(exp_name, device, image_id):
         print("forward pass time {:.3f}s".format(t_forward))
         print("nms time {:.3f}s".format(t_nms))
 
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
-    parser.add_argument('mode', choices=['train', 'val', 'test'], help='name of the experiment')
+    parser.add_argument(
+        'mode', choices=['train', 'val', 'test'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
-    parser.add_argument('--test_id', type=int, default=25, help="id of the image to test")
+    parser.add_argument('--test_id', type=int, default=25,
+                        help="id of the image to test")
     args = parser.parse_args()
-
 
     device = torch.device(args.device)
     if not torch.cuda.is_available():
         device = torch.device('cpu')
     print("Using device", device)
 
-    if args.mode=='train':
+    if args.mode == 'train':
         train(args.name, device)
-    if args.mode=='val':
+    if args.mode == 'val':
         if args.eval_range is None:
-            args.eval_range='all'
+            args.eval_range = 'all'
         experiment(args.name, device, eval_range=args.eval_range, plot=False)
-    if args.mode=='test':
+    if args.mode == 'test':
         test(args.name, device, image_id=args.test_id)
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......

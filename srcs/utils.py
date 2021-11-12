@@ -1,13 +1,14 @@
+import logger
+import os
+import json
+import math
 import torch
 import torch.nn
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 plt.switch_backend('agg')
-import math
-import json
-import os
-import logger
+
 
 def trasform_label2metric(label, ratio=4, grid_size=0.1, base_height=100):
     '''
@@ -21,21 +22,22 @@ def trasform_label2metric(label, ratio=4, grid_size=0.1, base_height=100):
 
     return metric
 
+
 def transform_metric2label(metric, ratio=4, grid_size=0.1, base_height=100):
     '''
     :param label: numpy array of shape [..., 2] of coordinates in metric space
     :return: numpy array of shape [..., 2] of the same coordinates in label_map space
     '''
 
-    label = (metric / ratio ) / grid_size
+    label = (metric / ratio) / grid_size
     label[..., 1] += base_height
     return label
+
 
 def maskFOV_on_BEV(shape, fov=88.0):
 
     height = shape[0]
     width = shape[1]
-
 
     fov = fov / 2
 
@@ -50,16 +52,19 @@ def maskFOV_on_BEV(shape, fov=88.0):
 
     return in_fov
 
+
 def get_logger(config, mode='train'):
     folder = os.path.join('logs', config['name'], mode)
     if not os.path.exists(folder):
         os.makedirs(folder)
     return logger.Logger(folder)
 
-def get_bev(velo_array, label_list = None, scores = None):
+
+def get_bev(velo_array, label_list=None, scores=None):
     map_height = velo_array.shape[0]
-    intensity = np.zeros((velo_array.shape[0], velo_array.shape[1], 3), dtype=np.uint8)   
-     # val = 1 - velo_array[::-1, :, -1]
+    intensity = np.zeros(
+        (velo_array.shape[0], velo_array.shape[1], 3), dtype=np.uint8)
+    # val = 1 - velo_array[::-1, :, -1]
     val = (1 - velo_array[::-1, :, :-1].max(axis=2)) * 255
     intensity[:, :, 0] = val
     intensity[:, :, 1] = val
@@ -73,11 +78,13 @@ def get_bev(velo_array, label_list = None, scores = None):
             plot_corners[:, 1] = map_height - plot_corners[:, 1]
             plot_corners = plot_corners.astype(int).reshape((-1, 1, 2))
             cv2.polylines(intensity, [plot_corners], True, (255, 0, 0), 2)
-            cv2.line(intensity, tuple(plot_corners[2, 0]), tuple(plot_corners[3, 0]), (0, 0, 255), 3)
+            cv2.line(intensity, tuple(plot_corners[2, 0]), tuple(
+                plot_corners[3, 0]), (0, 0, 255), 3)
 
     return intensity
 
-def plot_bev(velo_array, label_list = None, scores = None, window_name='GT', save_path=None):
+
+def plot_bev(velo_array, label_list=None, scores=None, window_name='GT', save_path=None):
     '''
     Plot a Birds Eye View Lidar and Bounding boxes (Using OpenCV!)
     The heading of the vehicle is marked as a red line
@@ -103,10 +110,12 @@ def plot_bev(velo_array, label_list = None, scores = None, window_name='GT', sav
 
     return intensity
 
+
 def plot_label_map(label_map):
     plt.figure()
     plt.imshow(label_map[::-1, :])
     plt.show()
+
 
 def plot_pr_curve(precisions, recalls, legend, name='PRCurve'):
 
@@ -119,6 +128,7 @@ def plot_pr_curve(precisions, recalls, legend, name='PRCurve'):
     path = os.path.join("Figures", name)
     fig.savefig(path)
     print("PR Curve saved at", path)
+
 
 def get_points_in_a_rotated_box(corners, label_shape=[200, 175]):
     def minY(x0, y0, x1, y1, x):
@@ -135,7 +145,6 @@ def get_points_in_a_rotated_box(corners, label_shape=[200, 175]):
             # lowest point is at right edge of pixel column
             return int(math.floor(y0 + m * ((x + 1.0) - x0)))
 
-
     def maxY(x0, y0, x1, y1, x):
         if x0 == x1:
             # vertical line, y1 is highest
@@ -149,7 +158,6 @@ def get_points_in_a_rotated_box(corners, label_shape=[200, 175]):
         else:
             # highest point is at left edge of pixel column
             return int(math.ceil(y0 + m * (x - x0)))
-
 
     # view_bl, view_tl, view_tr, view_br are the corners of the rectangle
     view = [(corners[i, 0], corners[i, 1]) for i in range(4)]
@@ -214,6 +222,7 @@ def get_points_in_a_rotated_box(corners, label_shape=[200, 175]):
 
     return pixels
 
+
 def load_config(exp_name):
     """ Loads the configuration file
 
@@ -231,13 +240,14 @@ def load_config(exp_name):
     with open(path) as file:
         config = json.load(file)
 
-    assert config['name']==exp_name
+    assert config['name'] == exp_name
 
     learning_rate = config["learning_rate"]
     batch_size = config["batch_size"]
     max_epochs = config["max_epochs"]
 
     return config, learning_rate, batch_size, max_epochs
+
 
 def get_model_name(config, epoch=None):
     """ Generate a name for the model consisting of all the hyperparameter values
@@ -263,10 +273,12 @@ def get_model_name(config, epoch=None):
     path = os.path.join(folder, str(epoch)+"epoch")
     return path
 
+
 def writefile(config, filename, value):
     path = os.path.join('experiments', config['name'], filename)
     with open(path, 'a') as f:
         f.write(value)
+
 
 def printnorm(self, input, output):
     # input is a tuple of packed inputs
@@ -281,6 +293,7 @@ def printnorm(self, input, output):
     print('output size:', output.data.size())
     print('output norm:', output.data.norm())
 
+
 def printgradnorm(self, grad_input, grad_output):
     print('Inside ' + self.__class__.__name__ + ' backward')
     print('Inside class:' + self.__class__.__name__)
@@ -293,6 +306,7 @@ def printgradnorm(self, grad_input, grad_output):
     print('grad_input size:', grad_input[0].size())
     print('grad_output size:', grad_output[0].size())
     print('grad_input norm:', grad_input[0].norm())
+
 
 if __name__ == "__main__":
     maskFOV_on_BEV(0)
