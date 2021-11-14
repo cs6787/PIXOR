@@ -11,6 +11,7 @@ from datagen import get_data_loader
 from model import PIXOR
 from utils import get_model_name, load_config, get_logger, plot_bev, plot_label_map, plot_pr_curve, get_bev
 from postprocess import filter_pred, compute_matches, compute_ap
+import torch.nn.utils.prune as prune
 
 
 def build_model(config, device, train=True):
@@ -189,30 +190,18 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     return metrics, precisions, recalls, log_images
 
 
-def train(exp_name, device):
-    # Load Hyperparameters
-    config, learning_rate, batch_size, max_epochs = load_config(exp_name)
+def train(net, device, config, learning_rate, batch_size, max_epochs):
 
     # Dataset and DataLoader
     train_data_loader, test_data_loader = get_data_loader(batch_size, config['use_npy'],
                                                           geometry=config['geometry'], frame_range=config['frame_range'])
-    # Model
-    net, loss_fn, optimizer, scheduler = build_model(
-        config, device, train=True)
+
 
     # Tensorboard Logger
     train_logger = get_logger(config, 'train')
     val_logger = get_logger(config, 'val')
 
     if config['resume_training']:
-        saved_ckpt_path = get_model_name(config)
-        if config['mGPUs']:
-            net.module.load_state_dict(torch.load(
-                saved_ckpt_path, map_location=device))
-        else:
-            net.load_state_dict(torch.load(
-                saved_ckpt_path, map_location=device))
-        print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
         st_epoch = config['resume_from']
     else:
         # writefile(config, 'train_loss.csv', 'iteration, cls_loss, loc_loss\n')
@@ -402,12 +391,40 @@ def test(exp_name, device, image_id):
         print("forward pass time {:.3f}s".format(t_forward))
         print("nms time {:.3f}s".format(t_nms))
 
+def prune_model(model):
+
+    params_to_prune = []
+
+    for name_of_param in model.named_modules():
+        print(len(name_of_param))
+        1/0
+        print(name_of_param)
+        print("####")
+        1/0
+    1/0
+
+    params_to_prune.append((param, name_of_param))
+
+    params_to_prune = [model.backbone.conv1.weight]
+#     parameters_to_prune = (
+#     (model.conv1, 'weight'),
+#     (model.conv2, 'weight'),
+#     (model.fc1, 'weight'),
+#     (model.fc2, 'weight'),
+#     (model.fc3, 'weight'),
+# )
+    prune.global_unstructured(
+        params_to_prune,
+        pruning_method=prune.L1Unstructured,
+        amount=0.2,
+    )
+
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument(
-        'mode', choices=['train', 'val', 'test'], help='name of the experiment')
+        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
@@ -421,13 +438,42 @@ if __name__ == "__main__":
     print("Using device", device)
 
     if args.mode == 'train':
-        train(args.name, device)
+        # Load Hyperparameters
+        config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        train(device, config, learning_rate, batch_size, max_epochs)
     if args.mode == 'val':
         if args.eval_range is None:
             args.eval_range = 'all'
         experiment(args.name, device, eval_range=args.eval_range, plot=False)
     if args.mode == 'test':
         test(args.name, device, image_id=args.test_id)
+
+    if args.mode == 'prune-fine-tune':
+
+        # Load Hyperparameters
+        config, learning_rate, batch_size, _ = load_config(args.name)
+        config["resume_training"] = True
+        fine_tune_epochs = 5
+
+        # Model
+        net, loss_fn, optimizer, scheduler = build_model(
+        config, device, train=True)
+
+        if config['resume_training']:
+            saved_ckpt_path = get_model_name(config)
+            if config['mGPUs']:
+                net.module.load_state_dict(torch.load(
+                    saved_ckpt_path, map_location=device))
+            else:
+                net.load_state_dict(torch.load(
+                    saved_ckpt_path, map_location=device))
+            print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
+
+
+        prune_model(net)
+        train(device, config, learning_rate, batch_size, fine_tune_epochs)
+
+
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
 
