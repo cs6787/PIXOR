@@ -395,24 +395,12 @@ def prune_model(model):
 
     params_to_prune = []
 
-    for name_of_param in model.named_modules():
-        print(len(name_of_param))
-        1/0
-        print(name_of_param)
-        print("####")
-        1/0
-    1/0
+    for mod_name, nn_mod in model.named_modules():
 
-    params_to_prune.append((param, name_of_param))
+        if isinstance(nn_mod, torch.nn.Conv2d):
+            if nn_mod.bias is not None:
+                params_to_prune.append((nn_mod, "bias"))
 
-    params_to_prune = [model.backbone.conv1.weight]
-#     parameters_to_prune = (
-#     (model.conv1, 'weight'),
-#     (model.conv2, 'weight'),
-#     (model.fc1, 'weight'),
-#     (model.fc2, 'weight'),
-#     (model.fc3, 'weight'),
-# )
     prune.global_unstructured(
         params_to_prune,
         pruning_method=prune.L1Unstructured,
@@ -470,6 +458,7 @@ if __name__ == "__main__":
             print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
 
         prune_model(net)
+        1/0
         train(device, config, learning_rate, batch_size, fine_tune_epochs)
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
