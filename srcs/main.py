@@ -381,7 +381,7 @@ def test(exp_name, device, image_id):
         print("forward pass time {:.3f}s".format(t_forward))
         print("nms time {:.3f}s".format(t_nms))
 
-def prune_model(model):
+def prune_model(model, method="L1_instructured", prune_amt=0.2):
 
     params_to_prune = []
 
@@ -391,11 +391,19 @@ def prune_model(model):
             if nn_mod.bias is not None:
                 params_to_prune.append((nn_mod, "bias"))
 
-    prune.global_unstructured(
-        params_to_prune,
-        pruning_method=prune.L1Unstructured,
-        amount=0.2,
-    )
+    if method == "L1_instructured":
+        prune.global_unstructured(
+            params_to_prune,
+            pruning_method=prune.L1Unstructured,
+            amount=prune_amt,
+        )
+    elif method == "random_unstructured":
+        prune.global_unstructured(
+            params_to_prune,
+            pruning_method=prune.RandomUnstructured,
+            amount=prune_amt,
+        )
+
 
 
 if __name__ == "__main__":
@@ -448,10 +456,8 @@ if __name__ == "__main__":
             print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
 
 
-        prune_model(net)
-        1/0
-        train(device, config, learning_rate, batch_size, fine_tune_epochs)
+        prune_model(net, method="random_structured", prune_amt=0.2)
 
-
+        train(net, device, config, learning_rate, batch_size, fine_tune_epochs)
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
