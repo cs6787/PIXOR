@@ -11,7 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 #KITTI_PATH = '/home/autoronto/Kitti/object'
-KITTI_PATH = '/Volumes/T7 Touch/KITTI'
+#KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
+KITTI_PATH = '/Volumes/T7 Touch/KITTI/'
 #KITTI_PATH = 'KITTI'
 
 
@@ -269,13 +270,13 @@ def get_data_loader(batch_size, use_npy, geometry=None, frame_range=10000):
         train_dataset.geometry = geometry
     train_dataset.load_velo()
     train_data_loader = DataLoader(
-        train_dataset, shuffle=True, batch_size=batch_size, num_workers=3)
+        train_dataset, shuffle=True, batch_size=batch_size, num_workers=0)
     val_dataset = KITTI(frame_range, use_npy=use_npy, train=False)
     if geometry is not None:
         val_dataset.geometry = geometry
     val_dataset.load_velo()
     val_data_loader = DataLoader(
-        val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=3)
+        val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=0)
 
     print("------------------------------------------------------------------")
     return train_data_loader, val_data_loader

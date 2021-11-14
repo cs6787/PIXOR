@@ -115,7 +115,7 @@ class Detector(object):
 
 def run(dataset, save_path, height=400):
     config = {
-        "ckpt_name": "experiments/default/34epoch",
+        "ckpt_name": "experiments/default/5epoch",
         "use_bn": True,
         "cls_threshold": 0.5,
         "nms_iou_threshold": 0.1,
@@ -182,7 +182,7 @@ def run(dataset, save_path, height=400):
 def make_kitti_video():
 
     #basedir = '/mnt/ssd2/od/KITTI/raw'
-    basedir = "/Users/petebuckman/Desktop/CS 6787 Final/city/"
+    basedir = "/Users/petebuckman/Desktop/CS 6787 Final/KITTI/"
     date = '2011_09_26'
     #drive = '0035'
     drive = '0001'

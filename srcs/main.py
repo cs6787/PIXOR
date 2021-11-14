@@ -73,11 +73,17 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             # Parallel post-processing
             predictions = list(torch.split(predictions.cpu(), 1, dim=0))
             batch_size = len(predictions)
-            with Pool(processes=3) as pool:
-                preds_filtered = pool.starmap(
-                    filter_pred, [(config, pred) for pred in predictions])
+
+            # with Pool(processes=3) as pool:
+            # preds_filtered = pool.starmap(
+            # filter_pred, [(config, pred) for pred in predictions], chunksize=1)
+            preds_filtered = []
+            for pred in predictions:
+                preds_filtered.append(filter_pred(config, pred))
+
             t_nms += (time.time() - toc)
             args = []
+
             for j in range(batch_size):
                 _, label_list = loader.dataset.get_label(image_id[j].item())
                 corners, scores = preds_filtered[j]
@@ -100,7 +106,8 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             for j in range(batch_size):
                 all_matches.extend(list(matches[j][1]))
 
-            #print(time.time() -tic)
+            # print(time.time() -tic)
+
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
     sort_ids = np.argsort(all_scores)
@@ -148,10 +155,9 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
 
     with torch.no_grad():
         for image_id in img_list:
-            #tic = time.time()
-            num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = \
-                eval_one(net, loss_fn, config, loader,
-                         image_id, device, plot=False)
+            # tic = time.time()
+            num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = eval_one(net, loss_fn, config, loader,
+                                                                                                image_id, device, plot=False)
             gts += num_gt
             preds += num_pred
             loss_sum += loss
@@ -163,7 +169,7 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
 
             if image_id in log_img_list:
                 log_images.append(pred_image)
-            #print(time.time() - tic)
+            # print(time.time() - tic)
 
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
@@ -259,7 +265,7 @@ def train(exp_name, device):
                 #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
 
             step += 1
-            #print(time.time() - tic)
+            # print(time.time() - tic)
 
         # Record Training Loss
         train_loss = train_loss / len(train_data_loader)
@@ -270,11 +276,15 @@ def train(exp_name, device):
         # Run Validation
         if (epoch + 1) % 2 == 0:
             tic = time.time()
+
             val_metrics, _, _, log_images = eval_batch(
                 config, net, loss_fn, test_data_loader, device)
+
             for tag, value in val_metrics.items():
                 val_logger.scalar_summary(tag, value, epoch + 1)
+
             val_logger.image_summary('Predictions', log_images, epoch + 1)
+
             print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
                 epoch + 1, time.time() - tic, val_metrics['loss']))
 
@@ -420,3 +430,6 @@ if __name__ == "__main__":
         test(args.name, device, image_id=args.test_id)
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
+
+
+print("test")

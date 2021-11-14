@@ -2,7 +2,7 @@
   "name": "default",
   "resume_training": false,
   "resume_from": 34,
-  "batch_size": 1,
+  "batch_size": 8,
   "learning_rate": 0.01,
   "momentum": 0.9,
   "weight_decay": 0.0001,
@@ -12,7 +12,7 @@
     20,
     30
   ],
-  "max_epochs": 2,
+  "max_epochs": 5,
   "save_every": 2,
   "log_every": 100,
   "use_bn": true,
