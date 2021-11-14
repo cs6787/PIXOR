@@ -196,7 +196,6 @@ def train(net, device, config, learning_rate, batch_size, max_epochs):
     train_data_loader, test_data_loader = get_data_loader(batch_size, config['use_npy'],
                                                           geometry=config['geometry'], frame_range=config['frame_range'])
 
-
     # Tensorboard Logger
     train_logger = get_logger(config, 'train')
     val_logger = get_logger(config, 'val')
@@ -391,6 +390,7 @@ def test(exp_name, device, image_id):
         print("forward pass time {:.3f}s".format(t_forward))
         print("nms time {:.3f}s".format(t_nms))
 
+
 def prune_model(model):
 
     params_to_prune = []
@@ -457,7 +457,7 @@ if __name__ == "__main__":
 
         # Model
         net, loss_fn, optimizer, scheduler = build_model(
-        config, device, train=True)
+            config, device, train=True)
 
         if config['resume_training']:
             saved_ckpt_path = get_model_name(config)
@@ -469,13 +469,7 @@ if __name__ == "__main__":
                     saved_ckpt_path, map_location=device))
             print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
 
-
         prune_model(net)
         train(device, config, learning_rate, batch_size, fine_tune_epochs)
 
-
-
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
-
-
-print("test")
