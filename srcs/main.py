@@ -1,3 +1,4 @@
+from pandas.core.frame import DataFrame
 import torch
 import torch.nn as nn
 import numpy as np
@@ -12,6 +13,7 @@ from model import PIXOR
 from utils import get_model_name, load_config, get_logger, plot_bev, plot_label_map, plot_pr_curve, get_bev
 from postprocess import filter_pred, compute_matches, compute_ap
 import torch.nn.utils.prune as prune
+import pandas as pd
 
 
 def build_model(config, device, train=True):
@@ -74,9 +76,15 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             # Parallel post-processing
             predictions = list(torch.split(predictions.cpu(), 1, dim=0))
             batch_size = len(predictions)
-            with Pool(processes=3) as pool:
-                preds_filtered = pool.starmap(
-                    filter_pred, [(config, pred) for pred in predictions])
+            #with Pool(processes=3) as pool:
+            #    preds_filtered = pool.starmap(
+            #        filter_pred, [(config, pred) for pred in predictions])
+
+            preds_filtered = []
+            for pred in predictions:
+                preds_filtered.append(filter_pred(config, pred))
+
+
             t_nms += (time.time() - toc)
             args = []
             for j in range(batch_size):
@@ -184,7 +192,9 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     return metrics, precisions, recalls, log_images
 
 
-def train(net, device, config, learning_rate, batch_size, max_epochs):
+def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
+
+    df_logs = pd.DataFrame()
 
     # Dataset and DataLoader
     train_data_loader, test_data_loader = get_data_loader(batch_size, config['use_npy'],
@@ -205,7 +215,8 @@ def train(net, device, config, learning_rate, batch_size, max_epochs):
     step = 1 + st_epoch * len(train_data_loader)
     cls_loss = 0
     loc_loss = 0
-    for epoch in range(st_epoch, max_epochs):
+
+    for epoch in range(st_epoch, st_epoch + max_epochs):
 
         start_time = time.time()
 
@@ -257,18 +268,19 @@ def train(net, device, config, learning_rate, batch_size, max_epochs):
             epoch + 1, time.time() - start_time, train_loss))
 
         # Run Validation
-        if (epoch + 1) % 2 == 0:
-            tic = time.time()
-            val_metrics, _, _, log_images = eval_batch(
-                config, net, loss_fn, test_data_loader, device)
-            for tag, value in val_metrics.items():
-                val_logger.scalar_summary(tag, value, epoch + 1)
-            val_logger.image_summary('Predictions', log_images, epoch + 1)
-            print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
-                epoch + 1, time.time() - tic, val_metrics['loss']))
+        #if (epoch + 1) % 2 == 0:
+        tic = time.time()
+        val_metrics, _, _, log_images = eval_batch(
+            config, net, loss_fn, test_data_loader, device)
+        for tag, value in val_metrics.items():
+            val_logger.scalar_summary(tag, value, epoch + 1)
+        val_logger.image_summary('Predictions', log_images, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+            epoch + 1, time.time() - tic, val_metrics['loss']))
+        print(val_metrics)
 
         # Save Checkpoint
-        if (epoch + 1) == max_epochs or (epoch + 1) % config['save_every'] == 0:
+        if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
             model_path = get_model_name(config, epoch + 1)
             if config['mGPUs']:
                 torch.save(net.module.state_dict(), model_path)
@@ -276,7 +288,9 @@ def train(net, device, config, learning_rate, batch_size, max_epochs):
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
 
+    df_logs = pd.concat([df_logs, pd.DataFrame({"exp_name": exp_name, "AP": val_metrics["AP"], "Precision": val_metrics["Precision"], "Recall": val_metrics["Recall"], "Forward Pass Time", val_metrics["Forward Pass Time"], "Postprocess Time": val_metrics["Postprocess Time"], "loss": val_metrics["loss"], "train_loss": train_loss}))
     print('Finished Training')
+    return df_logs
 
 
 def eval_one(net, loss_fn, config, loader, image_id, device, plot=False, verbose=False):
@@ -391,7 +405,7 @@ def prune_model(model, method="L1_instructured", prune_amt=0.2):
             if nn_mod.bias is not None:
                 params_to_prune.append((nn_mod, "bias"))
 
-    if method == "L1_instructured":
+    if method == "L1_unstructured":
         prune.global_unstructured(
             params_to_prune,
             pruning_method=prune.L1Unstructured,
@@ -439,7 +453,7 @@ if __name__ == "__main__":
         # Load Hyperparameters
         config, learning_rate, batch_size, _ = load_config(args.name)
         config["resume_training"] = True
-        fine_tune_epochs = 5
+        config["max_epochs"] = 5
 
         # Model
         net, loss_fn, optimizer, scheduler = build_model(
@@ -455,9 +469,15 @@ if __name__ == "__main__":
                     saved_ckpt_path, map_location=device))
             print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
 
+        df_logs = pd.DataFrame()
+        for prune_method in ["random_structured", "L1_unstructured"]:
+            for prune_amt in range(0, 1, 0.1):
+                prune_model(net, method=prune_method, prune_amt=prune_amt)
 
-        prune_model(net, method="random_structured", prune_amt=0.2)
+                df_logs_temp = train(net, device, config, learning_rate, batch_size, config["max_epochs"], exp_name= prune_method + "_" + prune_amt)
 
-        train(net, device, config, learning_rate, batch_size, fine_tune_epochs)
+                df_logs = pd.concat([df_logs, df_logs_temp])
+
+        df_logs.to_csv("experiment_logs.csv")
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
