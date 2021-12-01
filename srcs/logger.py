@@ -2,6 +2,7 @@
 import tensorflow as tf
 import numpy as np
 import scipy.misc
+import os
 
 try:
     from StringIO import StringIO  # Python 2.7
@@ -10,8 +11,11 @@ except ImportError:
 
 
 class Logger(object):
-    def __init__(self, log_dir):
+    def __init__(self, log_dir, exp_name=None):
         """Create a summary writer logging to log_dir."""
+
+        if exp_name is not None:
+            log_dir = os.path.join(log_dir, exp_name)
         self.writer = tf.summary.FileWriter(
             log_dir)  # look at this code -> https://github.com/eriklindernoren/PyTorch-YOLOv3/issues/327
 
