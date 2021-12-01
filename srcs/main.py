@@ -318,7 +318,7 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
                 "Postprocess Time": val_metrics["Postprocess Time"],
                 "loss": val_metrics["loss"],
                 "train_loss": train_loss,
-            }
+            }, index=[1]
         ),
     ]
     )
