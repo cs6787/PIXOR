@@ -53,11 +53,11 @@ def maskFOV_on_BEV(shape, fov=88.0):
     return in_fov
 
 
-def get_logger(config, mode='train'):
+def get_logger(config, exp_name = None, mode='train'):
     folder = os.path.join('logs', config['name'], mode)
     if not os.path.exists(folder):
         os.makedirs(folder)
-    return logger.Logger(folder)
+    return logger.Logger(folder, exp_name=exp_name)
 
 
 def get_bev(velo_array, label_list=None, scores=None):
@@ -249,7 +249,7 @@ def load_config(exp_name):
     return config, learning_rate, batch_size, max_epochs
 
 
-def get_model_name(config, epoch=None):
+def get_model_name(config, exp_name = None, epoch=None):
     """ Generate a name for the model consisting of all the hyperparameter values
 
     Args:
@@ -270,7 +270,11 @@ def get_model_name(config, epoch=None):
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-    path = os.path.join(folder, str(epoch)+"epoch")
+    if exp_name is not None:
+        path = os.path.join(folder, exp_name + str(epoch)+"epoch")
+    else:
+        path = os.path.join(folder, str(epoch)+"epoch")
+
     return path
 
 

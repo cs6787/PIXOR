@@ -143,8 +143,12 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     all_matches = all_matches[sort_ids[::-1]]
 
     metrics = {}
-    AP, precisions, recalls, precision, recall = compute_ap(
-        all_matches, gts, preds)
+    try:
+        AP, precisions, recalls, precision, recall = compute_ap(
+            all_matches, gts, preds)
+    except:
+        AP, precisions, recalls, precision, recall = [-1]*5
+
     metrics['AP'] = AP
     metrics['Precision'] = precision
     metrics['Recall'] = recall
@@ -398,8 +402,8 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
                                                           geometry=config['geometry'], frame_range=config['frame_range'])
 
     # Tensorboard Logger
-    train_logger = get_logger(config, 'train')
-    val_logger = get_logger(config, 'val')
+    train_logger = get_logger(config, exp_name=exp_name, mode='train')
+    val_logger = get_logger(config, exp_name=exp_name, mode='val')
 
     if config['resume_training']:
         st_epoch = config['resume_from']
@@ -411,6 +415,9 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
     step = 1 + st_epoch * len(train_data_loader)
     cls_loss = 0
     loc_loss = 0
+
+    best_loss = 100000000000
+    num_val_not_decreasing = 0
 
     for epoch in range(st_epoch, st_epoch + max_epochs):
 
@@ -476,15 +483,42 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
         print(val_metrics)
 
         # Save Checkpoint
-        if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
-            model_path = get_model_name(config, epoch + 1)
+        # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
+        if val_metrics["loss"] < best_loss:
+            best_loss = val_metrics["loss"]
+            model_path = get_model_name(
+                config, exp_name=exp_name, epoch=epoch + 1)
             if config['mGPUs']:
                 torch.save(net.module.state_dict(), model_path)
             else:
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
+        else:
+            num_val_not_decreasing += 1
+            # early stopping
+            if num_val_not_decreasing == 4:
+                print(
+                    f"early stopping on epoch {str(epoch)} for experiement {exp_name}")
+                break
 
-    # df_logs = pd.concat([df_logs, pd.DataFrame({"exp_name": exp_name, "AP": val_metrics["AP"], "Precision": val_metrics["Precision"], "Recall": val_metrics["Recall"], "Forward Pass Time", val_metrics["Forward Pass Time"], "Postprocess Time": val_metrics["Postprocess Time"], "loss": val_metrics["loss"], "train_loss": train_loss}))
+    df_logs = pd.concat(
+        [
+            df_logs,
+            pd.DataFrame(
+                {
+                    "exp_name": exp_name,
+                    "AP": val_metrics["AP"],
+                    "Precision": val_metrics["Precision"],
+                    "Recall": val_metrics["Recall"],
+                    "Forward Pass Time": val_metrics["Forward Pass Time"],
+                    "Postprocess Time": val_metrics["Postprocess Time"],
+                    "loss": val_metrics["loss"],
+                    "train_loss": train_loss,
+                }, index=[1]
+            ),
+        ]
+    )
+
     print('Finished Training')
 
     return df_logs
@@ -676,30 +710,29 @@ if __name__ == "__main__":
         config["resume_training"] = True
         config["max_epochs"] = 5
 
-        # Model
-        net, loss_fn, optimizer, scheduler = build_model(
-            config, device, train=True)
-
-        if config['resume_training']:
-            saved_ckpt_path = get_model_name(config)
-            if config['mGPUs']:
-                net.module.load_state_dict(torch.load(
-                    saved_ckpt_path, map_location=device))
-            else:
-                net.load_state_dict(torch.load(
-                    saved_ckpt_path, map_location=device))
-            print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
-
         df_logs = pd.DataFrame()
-        for prune_method in ["random_structured", "L1_unstructured"]:
-            for prune_amt in range(0, 1, 0.1):
+        for prune_method in ["random_unstructured", "L1_unstructured"]:
+            # 2,4,8,16, and 32 pruning reductation as recommended in the state of pruning paper
+            for prune_amt in [0.5, 1-0.25, 1-0.125, 1-0.0625, 1-0.03125]:
+
+                # Model
+                net, loss_fn, optimizer, scheduler = build_model(
+                    config, device, train=True)
+
+                if config['resume_training']:
+                    saved_ckpt_path = get_model_name(config)
+                    net.load_state_dict(torch.load(
+                        saved_ckpt_path, map_location=device))
+                    print("Successfully loaded trained ckpt at {}".format(
+                        saved_ckpt_path))
+
                 prune_model(net, method=prune_method, prune_amt=prune_amt)
 
                 df_logs_temp = train(net, device, config, learning_rate, batch_size,
-                                     config["max_epochs"], exp_name=prune_method + "_" + prune_amt)
+                                     config["max_epochs"], exp_name=prune_method + "_" + str(prune_amt))
 
                 df_logs = pd.concat([df_logs, df_logs_temp])
 
-        df_logs.to_csv("experiment_logs.csv")
+        df_logs.to_csv("prune_experiment_logs.csv")
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
