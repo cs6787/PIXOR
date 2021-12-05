@@ -42,12 +42,12 @@ def build_model(config, device, train=True):
     return net, loss_fn, optimizer, scheduler
 
 
-def build_dist_model(config, device, train=True, distill=1):
+def build_dist_model(config, device, train=True, distill="distill_layer"):
 
-    if distill == 1:
+    if distill == "distill_layer":
         net = PIXOR_DIST(config['geometry'], config['use_bn'])
 
-    if distill == 2:
+    if distill == "distill_conv":
         net = PIXOR_DIST2(config['geometry'], config['use_bn'])
 
     loss_fn = CustomDistLoss(device, config, num_classes=1)
@@ -669,7 +669,7 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
                 #    train_logger.histo_summary(tag, value.data.cpu().numpy(), step)
                 #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
 
-            step += 1
+            step += batch_size
             # print(time.time() - tic)
 
         # Record Training Loss
@@ -890,22 +890,14 @@ if __name__ == "__main__":
         test(args.name, device, image_id=args.test_id)
 
     if args.mode == "distill":
-
-        ### DISTILLED MODEL WITH LESS LAYERS ###
-
-        print("Training first distilled model:")
-
-        # loading the distilled model config file
-        config, learning_rate, batch_size, max_epochs = load_config(
-            "distill_layer")
-        # training off of the default
+        # loading model config
+        config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        # loading teacher config
         default_config, _, _, _ = load_config('default')
 
-        # NOT CONSIDERING RETRAINING MODEL - TRAINING FROM SCRATCH
-
-        # Distilled Model
+        # building model
         net, loss_fn, optimizer, scheduler = build_dist_model(
-            config, device, train=True, distill=1)
+            config, device, train=True, distill=args.name)
 
         # loading the teacher model ('34epoch')
         teacher_net, _ = build_model(default_config, device, train=False)
@@ -914,29 +906,10 @@ if __name__ == "__main__":
 
         teacher_net.eval()  # setting to evaluate mode
 
-        df_logs = pd.DataFrame()
+        df_logs = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
+                                  learning_rate, batch_size, max_epochs, exp_name=args.name)
 
-        df_logs_temp = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
-                                       learning_rate, batch_size, max_epochs, exp_name="distill_layer")
-
-        df_logs = pd.concat([df_logs, df_logs_temp])
-
-        ### DISTILLED MODEL WITH SMALLER CONVOLUTIONS ###
-
-        print("Training second distilled model:")
-
-        config, learning_rate, batch_size, max_epochs = load_config(
-            "distill_conv")
-
-        net, loss_fn, optimizer, scheduler = build_dist_model(
-            config, device, train=True, distill=2)
-
-        df_logs_temp = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
-                                       learning_rate, batch_size, max_epochs, exp_name="distill_conv")
-
-        df_logs = pd.concat([df_logs, df_logs_temp])
-
-        df_logs.to_csv("distilled_experiment_logs.csv")
+        df_logs.to_csv(args.name + "_experiment_logs.csv")
 
     if args.mode == 'prune-fine-tune':
 
