@@ -38,9 +38,16 @@ class CustomDistLoss(nn.Module):
         batch_size = targets.size(0)
 
         cls_targets, loc_targets = targets.split([1, 6], dim=1)
-        cls_preds, loc_preds = preds.split([1, 6], dim=1)
-        cls_teacher_preds, loc_teacher_preds = teacher_preds.split([
-                                                                   1, 6], dim=1)
+
+        if preds.size(1) == 7:
+            cls_preds, loc_preds = preds.split([1, 6], dim=1)
+            cls_teacher_preds, loc_teacher_preds = teacher_preds.split([
+                1, 6], dim=1)
+        elif preds.size(1) == 15:
+            cls_preds, loc_preds, _ = preds.split([1, 6, 8], dim=1)
+            cls_teacher_preds, loc_teacher_preds = teacher_preds.split([
+                                                                       1, 6], dim=1)
+
         # calculating cross entropy with respect to the training data
         cls_loss_training = self.cross_entropy(
             cls_preds, cls_targets)
@@ -73,7 +80,9 @@ class CustomDistLoss(nn.Module):
         loc_loss = loc_loss_training + loc_loss_teacher * self.nu
 
         loss = cls_loss + loc_loss
-        cls = cls_loss.item()
-        loc = loc_loss.item()
+        cls = cls_loss_training.item() * self.mew * self.alpha
+        loc = loc_loss_training.item() * (1 - self.mew) * self.alpha
+        cls_teacher = cls_loss_teacher.item()
+        loc_teacher = loc_loss_teacher.item() * self.nu
 
-        return loss, cls, loc
+        return loss, cls, loc, cls_teacher, loc_teacher

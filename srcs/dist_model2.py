@@ -147,7 +147,7 @@ class Header(nn.Module):
         self.conv3 = conv3x3(92, 92, bias=bias)
         self.bn3 = nn.BatchNorm2d(92)
         self.conv4 = conv3x3(92, 92, bias=bias)
-        self.bn4 = nn.BatchNorm2d(96)
+        self.bn4 = nn.BatchNorm2d(92)
 
         self.clshead = conv3x3(92, 1, bias=True)
         self.reghead = conv3x3(92, 6, bias=True)

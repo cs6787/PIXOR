@@ -12,6 +12,7 @@ from dist_loss import CustomDistLoss
 from datagen import get_data_loader
 from model import PIXOR
 from dist_model import PIXOR_DIST
+from dist_model2 import PIXOR_DIST2
 from utils import get_model_name, load_config, get_logger, plot_bev, plot_label_map, plot_pr_curve, get_bev
 from postprocess import filter_pred, compute_matches, compute_ap
 import torch.nn.utils.prune as prune
@@ -41,8 +42,14 @@ def build_model(config, device, train=True):
     return net, loss_fn, optimizer, scheduler
 
 
-def build_dist_model(config, device, train=True):
-    net = PIXOR_DIST(config['geometry'], config['use_bn'])
+def build_dist_model(config, device, train=True, distill=1):
+
+    if distill == 1:
+        net = PIXOR_DIST(config['geometry'], config['use_bn'])
+
+    if distill == 2:
+        net = PIXOR_DIST2(config['geometry'], config['use_bn'])
+
     loss_fn = CustomDistLoss(device, config, num_classes=1)
 
     if torch.cuda.device_count() <= 1:
@@ -63,6 +70,117 @@ def build_dist_model(config, device, train=True):
         optimizer, milestones=config['lr_decay_at'], gamma=0.1)
 
     return net, loss_fn, optimizer, scheduler
+
+
+def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_range='all'):
+
+    net.eval()
+    teacher_net.eval()  # even though I'm pretty sure it's already in eval mode
+
+    if config['mGPUs']:
+        net.module.set_decode(True)
+    else:
+        net.set_decode(True)
+
+    cls_loss = 0
+    loc_loss = 0
+    cls_teacher_loss = 0
+    loc_teacher_loss = 0
+    all_scores = []
+    all_matches = []
+    log_images = []
+    gts = 0
+    preds = 0
+    t_fwd = 0
+    t_nms = 0
+
+    log_img_list = random.sample(range(len(loader.dataset)), 10)
+
+    with torch.no_grad():
+        for i, data in enumerate(loader):
+            tic = time.time()
+            input, label_map, image_id = data
+            input = input.to(device)
+            label_map = label_map.to(device)
+            tac = time.time()
+            predictions = net(input)
+            t_fwd += time.time() - tac
+
+            # getting the teacher predictions, no need to get forward times for this set
+            teacher_predictions = teacher_net(input)
+
+            loss, cls, loc, cls_teacher, loc_teacher = loss_fn(
+                predictions, teacher_predictions, label_map)
+            cls_loss += cls
+            loc_loss += loc
+            cls_teacher_loss += cls_teacher
+            loc_teacher_loss += loc_teacher
+            t_fwd += (time.time() - tic)
+
+            toc = time.time()
+            # Parallel post-processing
+            predictions = list(torch.split(predictions.cpu(), 1, dim=0))
+            batch_size = len(predictions)
+            # with Pool(processes=3) as pool:
+            #    preds_filtered = pool.starmap(
+            #        filter_pred, [(config, pred) for pred in predictions])
+
+            preds_filtered = []
+            for pred in predictions:
+                preds_filtered.append(filter_pred(config, pred))
+
+            t_nms += (time.time() - toc)
+            args = []
+
+            for j in range(batch_size):
+                _, label_list = loader.dataset.get_label(image_id[j].item())
+                corners, scores = preds_filtered[j]
+                gts += len(label_list)
+                preds += len(scores)
+                all_scores.extend(list(scores))
+                if image_id[j] in log_img_list:
+                    input_np = input[j].cpu().permute(1, 2, 0).numpy()
+                    pred_image = get_bev(input_np, corners)
+                    log_images.append(pred_image)
+
+                arg = (np.array(label_list), corners, scores)
+                args.append(arg)
+
+            # Parallel compute matchesi
+
+            with Pool(processes=3) as pool:
+                matches = pool.starmap(compute_matches, args)
+
+            for j in range(batch_size):
+                all_matches.extend(list(matches[j][1]))
+
+            # print(time.time() -tic)
+
+    all_scores = np.array(all_scores)
+    all_matches = np.array(all_matches)
+    sort_ids = np.argsort(all_scores)
+    all_matches = all_matches[sort_ids[::-1]]
+
+    metrics = {}
+    try:
+        AP, precisions, recalls, precision, recall = compute_ap(
+            all_matches, gts, preds)
+    except:
+        AP, precisions, recalls, precision, recall = [-1]*5
+
+    metrics['AP'] = AP
+    metrics['Precision'] = precision
+    metrics['Recall'] = recall
+    metrics['Forward Pass Time'] = t_fwd/len(loader.dataset)
+    metrics['Postprocess Time'] = t_nms/len(loader.dataset)
+
+    cls_loss = cls_loss / len(loader)
+    loc_loss = loc_loss / len(loader)
+    cls_teacher_loss = cls_teacher_loss / len(loader)
+    loc_teacher_loss = loc_teacher_loss / len(loader)
+    metrics['loss'] = cls_loss + loc_loss + cls_teacher_loss + loc_teacher_loss
+
+    return metrics, precisions, recalls, log_images
 
 
 def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
@@ -297,7 +415,7 @@ def train_orig(exp_name, device):
                 #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
 
             step += 1
-            #print(time.time() - tic)
+            # print(time.time() - tic)
 
         # Record Training Loss
         train_loss = train_loss / len(train_data_loader)
@@ -330,6 +448,8 @@ def train_orig(exp_name, device):
 
 def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
 
+    df_logs = pd.DataFrame()
+
     # Dataset and DataLoader - using same data for distilled model (re training on same data)
     train_data_loader, test_data_loader = get_data_loader(
         batch_size, config['use_npy'], geometry=config['geometry'], frame_range=config['frame_range'])
@@ -350,11 +470,18 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
     cls_loss = 0
     # regression loss - calculated adding regression loss wrt data and teacher model
     loc_loss = 0
+    # cross entropy loss wrt to the teacher model
+    cls_teacher_loss = 0
+    # regression loss wrt to the teacher model
+    loc_teacher_loss = 0
+
+    best_loss = 100000000000
+    num_val_not_decreasing = 0
 
     # training for a certain number of epochs
     for epoch in range(st_epoch, st_epoch + max_epochs):
 
-        print(epoch)
+        print("Epoch number: " + str(epoch + 1))
 
         start_time = time.time()  # starting timer
 
@@ -379,18 +506,99 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
             predictions = net(input)
             teacher_predictions = teacher_net(input)
 
-            loss, cls, loc = loss_fn(
+            loss, cls, loc, cls_teacher, loc_teacher = loss_fn(
                 predictions, teacher_predictions, label_map)
 
             loss.backward()
             optimizer.step()
 
-            # keeping sum total of all the losses
+            # keeping sum total of all the losses - will average later
             cls_loss += cls
             loc_loss += loc
+            cls_teacher_loss += cls_teacher
+            loc_teacher_loss += loc_teacher
             train_loss += loss.item()
 
+            # logging cls_loss and loc_loss every certain number of steps
+            if step % config['log_every'] == 0:
+                cls_loss = cls_loss / config['log_every']
+                loc_loss = loc_loss / config['log_every']
+                cls_teacher_loss = cls_teacher_loss / config['log_every']
+                loc_teacher_loss = loc_teacher_loss / config['log_every']
+                train_logger.scalar_summary('cls_loss', cls_loss, step)
+                train_logger.scalar_summary('loc_loss', loc_loss, step)
+                train_logger.scalar_summary(
+                    'cls_teacher_loss', cls_teacher_loss, step)
+                train_logger.scalar_summary(
+                    'loc_teacher_loss', loc_teacher_loss, step)
+                cls_loss = 0
+                loc_loss = 0
+                cls_teacher_loss = 0
+                loc_teacher_loss = 0
+
+            # increasing # of steps
+            step += 1
+
         scheduler.step()  # stepping the learning rate (after the first optimizer step)
+
+        # Record Training Loss
+        train_loss = train_loss / len(train_data_loader)
+        train_logger.scalar_summary('loss', train_loss, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
+            epoch + 1, time.time() - start_time, train_loss))
+
+        # Run Validation
+        # if (epoch + 1) % 2 == 0:
+        tic = time.time()
+        val_metrics, _, _, log_images = eval_batch_distill(
+            config, net, teacher_net, loss_fn, test_data_loader, device)
+        for tag, value in val_metrics.items():
+            val_logger.scalar_summary(tag, value, epoch + 1)
+        val_logger.image_summary('Predictions', log_images, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+            epoch + 1, time.time() - tic, val_metrics['loss']))
+        print(val_metrics)
+
+        # Save Checkpoint, implemented with early stopping if validation loss is too high
+        # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
+        if val_metrics["loss"] < best_loss:
+            best_loss = val_metrics["loss"]
+            model_path = get_model_name(
+                config, exp_name=exp_name, epoch=epoch + 1)
+            if config['mGPUs']:
+                torch.save(net.module.state_dict(), model_path)
+            else:
+                torch.save(net.state_dict(), model_path)
+            print("Checkpoint saved at {}".format(model_path))
+        else:
+            num_val_not_decreasing += 1
+            # early stopping
+            if num_val_not_decreasing == 4:
+                print(
+                    f"early stopping on epoch {str(epoch)} for experiement {exp_name}")
+                break
+
+    df_logs = pd.concat(
+        [
+            df_logs,
+            pd.DataFrame(
+                {
+                    "exp_name": exp_name,
+                    "AP": val_metrics["AP"],
+                    "Precision": val_metrics["Precision"],
+                    "Recall": val_metrics["Recall"],
+                    "Forward Pass Time": val_metrics["Forward Pass Time"],
+                    "Postprocess Time": val_metrics["Postprocess Time"],
+                    "loss": val_metrics["loss"],
+                    "train_loss": train_loss,
+                }, index=[1]
+            ),
+        ]
+    )
+
+    print('Finished Training')
+
+    return df_logs
 
 
 def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
@@ -672,8 +880,8 @@ if __name__ == "__main__":
         train_orig(args.name, device)
 
         # Load Hyperparameters
-        #config, learning_rate, batch_size, max_epochs = load_config(args.name)
-        #train(device, config, learning_rate, batch_size, max_epochs)
+        # config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        # train(device, config, learning_rate, batch_size, max_epochs)
     if args.mode == 'val':
         if args.eval_range is None:
             args.eval_range = 'all'
@@ -682,8 +890,14 @@ if __name__ == "__main__":
         test(args.name, device, image_id=args.test_id)
 
     if args.mode == "distill":
+
+        ### DISTILLED MODEL WITH LESS LAYERS ###
+
+        print("Training first distilled model:")
+
         # loading the distilled model config file
-        config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        config, learning_rate, batch_size, max_epochs = load_config(
+            "distill_layer")
         # training off of the default
         default_config, _, _, _ = load_config('default')
 
@@ -691,7 +905,7 @@ if __name__ == "__main__":
 
         # Distilled Model
         net, loss_fn, optimizer, scheduler = build_dist_model(
-            config, device, train=True)
+            config, device, train=True, distill=1)
 
         # loading the teacher model ('34epoch')
         teacher_net, _ = build_model(default_config, device, train=False)
@@ -700,8 +914,29 @@ if __name__ == "__main__":
 
         teacher_net.eval()  # setting to evaluate mode
 
-        train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
-                        learning_rate, batch_size, max_epochs, exp_name=None)
+        df_logs = pd.DataFrame()
+
+        df_logs_temp = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
+                                       learning_rate, batch_size, max_epochs, exp_name="distill_layer")
+
+        df_logs = pd.concat([df_logs, df_logs_temp])
+
+        ### DISTILLED MODEL WITH SMALLER CONVOLUTIONS ###
+
+        print("Training second distilled model:")
+
+        config, learning_rate, batch_size, max_epochs = load_config(
+            "distill_conv")
+
+        net, loss_fn, optimizer, scheduler = build_dist_model(
+            config, device, train=True, distill=2)
+
+        df_logs_temp = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
+                                       learning_rate, batch_size, max_epochs, exp_name="distill_conv")
+
+        df_logs = pd.concat([df_logs, df_logs_temp])
+
+        df_logs.to_csv("distilled_experiment_logs.csv")
 
     if args.mode == 'prune-fine-tune':
 
