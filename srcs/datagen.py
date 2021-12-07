@@ -11,7 +11,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 #KITTI_PATH = '/home/autoronto/Kitti/object'
-KITTI_PATH = '/Volumes/T7 Touch/KITTI'
+# KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
+KITTI_PATH = '/media/jmoon/T7 Touch/KITTI/'
 #KITTI_PATH = 'KITTI'
 
 
@@ -69,9 +70,9 @@ class KITTI(Dataset):
         path = KITTI_PATH
 
         if train:
-            path = os.path.join(path, "train.txt")
+            path = os.path.join(path, "train1000.txt")
         else:
-            path = os.path.join(path, "val.txt")
+            path = os.path.join(path, "val1000.txt")
 
         with open(path, 'r') as f:
             lines = f.readlines()  # get rid of \n symbol
