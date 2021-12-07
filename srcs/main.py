@@ -216,6 +216,7 @@ def train(exp_name, device):
     step = 1 + st_epoch * len(train_data_loader)
     cls_loss = 0
     loc_loss = 0
+    scaler = torch.cuda.amp.GradScaler()
     for epoch in range(st_epoch, max_epochs):
 
         start_time = time.time()
@@ -237,10 +238,12 @@ def train(exp_name, device):
             optimizer.zero_grad()
 
             # Forward
-            predictions = net(input)
-            loss, cls, loc = loss_fn(predictions, label_map)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                predictions = net(input)
+                loss, cls, loc = loss_fn(predictions, label_map)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             cls_loss += cls
             loc_loss += loc
             train_loss += loss.item()
@@ -286,7 +289,8 @@ def train(exp_name, device):
             else:
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
-
+    
+    # torch.save(net.state_dict(), model_path)
     print('Finished Training')
 
 
