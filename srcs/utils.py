@@ -249,7 +249,7 @@ def load_config(exp_name):
     return config, learning_rate, batch_size, max_epochs
 
 
-def get_model_name(config, epoch=None):
+def get_model_name(config, exp_name = None, epoch=None):
     """ Generate a name for the model consisting of all the hyperparameter values
 
     Args:
@@ -270,7 +270,11 @@ def get_model_name(config, epoch=None):
     if not os.path.exists(folder):
         os.makedirs(folder)
 
-    path = os.path.join(folder, str(epoch)+"epoch")
+    if exp_name is not None:
+        path = os.path.join(folder, exp_name + str(epoch)+"epoch")
+    else:
+        path = os.path.join(folder, str(epoch)+"epoch")
+
     return path
 
 

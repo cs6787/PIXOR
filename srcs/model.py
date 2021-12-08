@@ -211,7 +211,9 @@ class Header(nn.Module):
         if self.use_bn:
             x = self.bn4(x)
 
-        cls = torch.sigmoid(self.clshead(x))
+        cls = self.clshead(x)
+        # print('cls', cls)
+        # print('is_any nan', torch.any(torch.isnan(cls)))
         reg = self.reghead(x)
 
         return cls, reg

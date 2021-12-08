@@ -265,6 +265,8 @@ def train(exp_name, device):
             #print(time.time() - tic)
 
         # Record Training Loss
+        print('train_loss', train_loss)
+        print('train_data_loader', train_data_loader)
         train_loss = train_loss / len(train_data_loader)
         train_logger.scalar_summary('loss', train_loss, epoch + 1)
         print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
@@ -283,7 +285,7 @@ def train(exp_name, device):
 
         # Save Checkpoint
         if (epoch + 1) == max_epochs or (epoch + 1) % config['save_every'] == 0:
-            model_path = get_model_name(config, epoch + 1)
+            model_path = get_model_name(config, exp_name=exp_name, epoch=epoch + 1)
             if config['mGPUs']:
                 torch.save(net.module.state_dict(), model_path)
             else:

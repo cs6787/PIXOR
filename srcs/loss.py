@@ -34,7 +34,9 @@ class CustomLoss(nn.Module):
         return loss.mean()
 
     def cross_entropy(self, x, y):
-        return F.binary_cross_entropy(input=x, target=y, reduction='elementwise_mean')
+        val = F.binary_cross_entropy_with_logits(input=x, target=y, reduction='elementwise_mean')
+        # print(val)
+        return val
 
 
     def forward(self, preds, targets):
@@ -59,20 +61,25 @@ class CustomLoss(nn.Module):
         ################################################################
         # cls_loss = self.focal_loss(cls_preds, cls_targets)
         ################################################################
+        # cls_preds = torch.sigmoid(cls_preds)
+        # print('cls_preds', cls_preds)
+        # print('cls_preds after sigmoid:',torch.sigmoid(cls_preds))
         cls_loss = self.cross_entropy(cls_preds, cls_targets) * self.alpha
         cls = cls_loss.item()
         ################################################################
         # reg_loss = SmoothL1Loss(loc_preds, loc_targets)
         ################################################################
-        
         pos_pixels = cls_targets.sum()
+        # print('pos_pixels', pos_pixels)
+        # print('los_loss', loc_loss)
+        # print('cls_loss', cls_loss)
         if pos_pixels > 0:
             loc_loss = F.smooth_l1_loss(cls_targets * loc_preds, loc_targets, reduction='sum') / pos_pixels * self.beta
             loc = loc_loss.item()
             loss = loc_loss + cls_loss
         else:
             loc = 0.0
-            loss = cls_loss
+            loss = cls_loss 
         
         #print(cls, loc)
         return loss, cls, loc
