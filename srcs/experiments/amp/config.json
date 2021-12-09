@@ -13,9 +13,11 @@
     10,
     15,
     20,
-    30
+    25,
+    30,
+    35
   ],
-  "max_epochs": 20,
+  "max_epochs": 40,
   "save_every": 2,
   "log_every": 100,
   "use_bn": true,

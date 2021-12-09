@@ -217,6 +217,9 @@ def train(exp_name, device):
     cls_loss = 0
     loc_loss = 0
     scaler = torch.cuda.amp.GradScaler()
+    
+    best_loss = 10E8
+    num_val_not_decreasing = 0
     for epoch in range(st_epoch, max_epochs):
 
         start_time = time.time()
@@ -272,25 +275,46 @@ def train(exp_name, device):
         print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
             epoch + 1, time.time() - start_time, train_loss))
 
+        # # Run Validation
+        # if (epoch + 1) % 2 == 0:
+        #     tic = time.time()
+        #     val_metrics, _, _, log_images = eval_batch(
+        #         config, net, loss_fn, test_data_loader, device)
+        #     for tag, value in val_metrics.items():
+        #         val_logger.scalar_summary(tag, value, epoch + 1)
+        #     val_logger.image_summary('Predictions', log_images, epoch + 1)
+        #     print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+        #         epoch + 1, time.time() - tic, val_metrics['loss']))
+        
         # Run Validation
-        if (epoch + 1) % 2 == 0:
-            tic = time.time()
-            val_metrics, _, _, log_images = eval_batch(
-                config, net, loss_fn, test_data_loader, device)
-            for tag, value in val_metrics.items():
-                val_logger.scalar_summary(tag, value, epoch + 1)
-            val_logger.image_summary('Predictions', log_images, epoch + 1)
-            print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
-                epoch + 1, time.time() - tic, val_metrics['loss']))
-
+        #if (epoch + 1) % 2 == 0:
+        tic = time.time()
+        val_metrics, _, _, log_images = eval_batch(
+            config, net, loss_fn, test_data_loader, device)
+        for tag, value in val_metrics.items():
+            val_logger.scalar_summary(tag, value, epoch + 1)
+        val_logger.image_summary('Predictions', log_images, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+            epoch + 1, time.time() - tic, val_metrics['loss']))
+        print(val_metrics)
+                                
         # Save Checkpoint
-        if (epoch + 1) == max_epochs or (epoch + 1) % config['save_every'] == 0:
-            model_path = get_model_name(config, exp_name=exp_name, epoch=epoch + 1)
+        #if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
+        if val_metrics["loss"] < best_loss:
+            best_loss = val_metrics["loss"]
+            model_path = get_model_name(config, exp_name = exp_name, epoch = epoch + 1)
             if config['mGPUs']:
                 torch.save(net.module.state_dict(), model_path)
             else:
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
+            num_val_not_decreasing = 0
+        else:
+            num_val_not_decreasing+=1
+            # early stopping
+            if num_val_not_decreasing == 10:
+                print(f"early stopping on epoch {str(epoch)} for experiement {exp_name}")
+                break
     
     # torch.save(net.state_dict(), model_path)
     print('Finished Training')
