@@ -289,6 +289,7 @@ def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=N
         # Save Checkpoint
         #if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
         if val_metrics["loss"] < best_loss:
+            num_val_not_decreasing=0
             best_loss = val_metrics["loss"]
             model_path = get_model_name(config, exp_name = exp_name, epoch = epoch + 1)
             if config['mGPUs']:
@@ -492,7 +493,7 @@ if __name__ == "__main__":
         df_logs = pd.DataFrame()
         for prune_method in ["random_unstructured", "L1_unstructured"]:
             # 2,4,8,16, and 32 pruning reductation as recommended in the state of pruning paper
-            for prune_amt in [0.5, 1-0.25, 1-0.125, 1-0.0625, 1-0.03125]:
+            for prune_amt in [0, 0.5, 1-0.25, 1-0.125, 1-0.0625, 1-0.03125]:
 
                 # Model
                 net, loss_fn, optimizer, scheduler = build_model(
