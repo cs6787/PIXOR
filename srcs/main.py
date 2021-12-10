@@ -430,7 +430,7 @@ def test(exp_name, device, image_id):
         print("forward pass time {:.3f}s".format(t_forward))
         print("nms time {:.3f}s".format(t_nms))
 
-def prune_model(model, method="L1_instructured", prune_amt=0.2):
+def prune_model(model, method="L1_unstructured", prune_amt=0.2):
 
     params_to_prune = []
 
@@ -459,12 +459,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument(
-        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune'], help='name of the experiment')
+        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'hardware-performance'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
     parser.add_argument('--test_id', type=int, default=25,
                         help="id of the image to test")
+    parser.add_argument('--weights', type=str, help='path of weights to load')
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -512,5 +513,62 @@ if __name__ == "__main__":
                 df_logs = pd.concat([df_logs, df_logs_temp])
 
         df_logs.to_csv("prune_experiment_logs.csv")
+
+    if args.mode == 'hardware-performance':
+
+        config, _, _, _ = load_config(args.name)
+
+        net, _, _, _ = build_model(config, device, train=True)
+
+        weights_path = args.weights
+
+
+        saved_ckpt_path = get_model_name(config)
+        net.load_state_dict(torch.load(saved_ckpt_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
+
+        prune_model(net)
+
+        net.load_state_dict(torch.load(
+            weights_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(weights_path))
+
+
+        for mod_name, nn_mod in net.named_modules():
+
+            if isinstance(nn_mod, torch.nn.Conv2d):
+                if nn_mod.bias is not None:
+                    nn_mod = torch.nn.utils.prune.remove(nn_mod, name='bias')
+
+        train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
+                                                        geometry=config['geometry'], frame_range=config['frame_range'])
+
+        inference_time = 0
+        total_frames = 0
+
+        net.eval()
+        net.set_decode(False)
+
+        loading_and_inference_time_start = time.time()
+
+        for input, _, _ in train_data_loader:
+
+            total_frames+=len(input)
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+
+            inference_time_start = time.time()
+            predictions = net(input)
+            inference_time+= time.time() - inference_time_start
+
+
+        total_loading_and_inference_time = time.time() - loading_and_inference_time_start
+        
+        average_loading_plus_inference  = 1.0*total_loading_and_inference_time / total_frames
+        average_inference = 1.0*inference_time /  total_frames
+
+        print(f"average time to load and predict on an image: {average_loading_plus_inference}")
+        print(f"average time to predict on an image: {average_inference}")
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
