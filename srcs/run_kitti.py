@@ -100,7 +100,8 @@ class Detector(object):
         bev = self.preprocess(velo, path)
         t_pre = time.time()
         with torch.no_grad():
-            pred = self.net(bev.unsqueeze(0)).squeeze_(0)
+            with torch.cuda.amp.autocast():
+                pred = self.net(bev.unsqueeze(0)).squeeze_(0)
 
         t_m = time.time()
         corners, scores = filter_pred(self.config, pred)
@@ -115,7 +116,7 @@ class Detector(object):
 
 def run(dataset, save_path, height=400):
     config = {
-        "ckpt_name": "experiments/default/34epoch",
+        "ckpt_name": "experiments/amp/amp25epoch",
         "use_bn": True,
         "cls_threshold": 0.5,
         "nms_iou_threshold": 0.1,
@@ -177,12 +178,12 @@ def run(dataset, save_path, height=400):
           "        Forward Time:        {:.3f}s \n"
           "        Postprocessing Time: {:.3f}s"
           .format(avg_time[0], avg_time[1], avg_time[2]))
-
+    print(1/avg_time[1])
 
 def make_kitti_video():
 
     #basedir = '/mnt/ssd2/od/KITTI/raw'
-    basedir = "/Users/petebuckman/Desktop/CS 6787 Final/city/"
+    basedir = "/media/jmoon/T7 Touch/KITTI2/city/"
     date = '2011_09_26'
     #drive = '0035'
     drive = '0001'
@@ -197,7 +198,7 @@ def make_kitti_video():
 def make_test_video():
 
     #basedir = '/mnt/ssd2/od/testset'
-    basedir = "/Volumes/T7 Touch/KITTI/city/"
+    basedir = "/media/jmoon/T7 Touch/KITTI2/city/"
     date = '_2018-10-30-15-25-07'
     import testset
     dataset = testset.TestSet(basedir, date)
