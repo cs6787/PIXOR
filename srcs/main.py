@@ -79,8 +79,11 @@ def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_r
 
     if config['mGPUs']:
         net.module.set_decode(True)
+        teacher_net.module.set_decode(True)
     else:
         net.set_decode(True)
+        teacher_net.set_decode(True)
+    
 
     cls_loss = 0
     loc_loss = 0
@@ -492,8 +495,10 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
         # whether to set decode to false if using mGPUs
         if config['mGPUs']:
             net.module.set_decode(False)
+            teacher_net.module.set_decode(False)
         else:
             net.set_decode(False)
+            teacher_net.set_decode(False)
 
         for input, label_map, image_id, in train_data_loader:
 
@@ -558,6 +563,7 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
         print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
             epoch + 1, time.time() - tic, val_metrics['loss']))
         print(val_metrics)
+
 
         # Save Checkpoint, implemented with early stopping if validation loss is too high
         # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
