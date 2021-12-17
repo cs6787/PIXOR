@@ -576,7 +576,7 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
             else:
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
-            num_val_not_decreasing = 1
+            num_val_not_decreasing=0
         else:
             num_val_not_decreasing += 1
             # early stopping
