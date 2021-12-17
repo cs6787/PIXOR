@@ -12,8 +12,8 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 #KITTI_PATH = '/home/autoronto/Kitti/object'
-KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
-#KITTI_PATH = '/media/jmoon/T7 Touch/KITTI'
+# KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
+KITTI_PATH = '/media/jmoon/T7 Touch/KITTI'
 #KITTI_PATH = '/Volumes/T7 Touch/KITTI/'
 #KITTI_PATH = 'KITTI'
 
