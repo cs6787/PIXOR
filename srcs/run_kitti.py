@@ -10,18 +10,15 @@ import cv2
 import os.path
 import ctypes
 import time
-import argparse
 
 from model import PIXOR
-from dist_model import PIXOR_DIST
-from dist_model2 import PIXOR_DIST2
 from postprocess import filter_pred, non_max_suppression
 from utils import get_bev, plot_bev
 
 
 class Detector(object):
 
-    def __init__(self, config, cdll, name):
+    def __init__(self, config, cdll):
         self.config = config
         self.cdll = cdll
         if self.cdll:
@@ -29,16 +26,7 @@ class Detector(object):
                 'preprocess/LidarPreprocess.so')
         #self.device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
         self.device = torch.device('cpu')
-
-        if name == "default":
-            self.net = PIXOR(config['geometry'],
-                             config['use_bn']).to(self.device)
-        elif name == "distill_layer":
-            self.net = PIXOR_DIST(config['geometry'],
-                                  config['use_bn']).to(self.device)
-        elif name == "distill_conv":
-            self.net = PIXOR_DIST2(config['geometry'],
-                                   config['use_bn']).to(self.device)
+        self.net = PIXOR(config['geometry'], config['use_bn']).to(self.device)
 
         self.net.set_decode(True)
         self.net.load_state_dict(torch.load(
@@ -125,12 +113,9 @@ class Detector(object):
         return t_s, corners, scores, pred_bev
 
 
-def run(dataset, save_path, name, model, height=400):
-
-    ckpt_name = os.path.join("experiments", name, model)
-
+def run(dataset, save_path, height=400):
     config = {
-        "ckpt_name": ckpt_name,
+        "ckpt_name": "experiments/default/5epoch",
         "use_bn": True,
         "cls_threshold": 0.5,
         "nms_iou_threshold": 0.1,
@@ -150,7 +135,7 @@ def run(dataset, save_path, name, model, height=400):
 
     # Initialize Detector
     cdll = True
-    pixor = Detector(config, cdll, name)
+    pixor = Detector(config, cdll)
 
     # Initialize path to Kitti dataset
 
@@ -194,20 +179,19 @@ def run(dataset, save_path, name, model, height=400):
           .format(avg_time[0], avg_time[1], avg_time[2]))
 
 
-def make_kitti_video(name, model):
+def make_kitti_video():
 
     #basedir = '/mnt/ssd2/od/KITTI/raw'
-
     basedir = "/Users/petebuckman/Desktop/CS 6787 Final/KITTI/"
     date = '2011_09_26'
     #drive = '0035'
     drive = '0001'
     dataset = pykitti.raw(basedir, date, drive)
 
-    videoname = "{}_{}_detection_{}_{}.avi".format(name, model, date, drive)
+    videoname = "detection_{}_{}.avi".format(date, drive)
     save_path = os.path.join(
         basedir, date, "{}_drive_{}_sync".format(date, drive), videoname)
-    run(dataset, save_path, name, model)
+    run(dataset, save_path)
 
 
 def make_test_video():
@@ -224,11 +208,4 @@ def make_test_video():
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PIXOR custom implementation')
-    parser.add_argument('--name', required=True, help="name of the experiment")
-    parser.add_argument('--model', required=True,
-                        help="file name of the model to run")
-
-    args = parser.parse_args()
-
-    make_kitti_video(args.name, args.model)
+    make_kitti_video()
