@@ -869,7 +869,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument(
-        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'hardware-performance', 'distill'], help='name of the experiment')
+        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'distill', 'hardware-performance', 'hardware-performance-distill'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
@@ -949,6 +949,48 @@ if __name__ == "__main__":
                 df_logs = pd.concat([df_logs, df_logs_temp])
 
         df_logs.to_csv("prune_experiment_logs.csv")
+
+    if args.mode == 'hardware-performance-distill':
+        config, _, _, _ = load_config(args.name)
+        net, _, _, _ = build_dist_model(
+            config, device, train=True, distill=args.name)
+
+        weights_path = args.weights
+
+        net.load_state_dict(torch.load(weights_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(weights_path))
+
+        train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
+                                               geometry=config['geometry'], frame_range=config['frame_range'])
+
+        inference_time = 0
+        total_frames = 0
+
+        net.eval()
+        net.set_decode(False)
+
+        loading_and_inference_time_start = time.time()
+
+        for input, _, _ in train_data_loader:
+
+            total_frames += len(input)
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+
+            inference_time_start = time.time()
+            predictions = net(input)
+            inference_time += time.time() - inference_time_start
+
+        total_loading_and_inference_time = time.time() - loading_and_inference_time_start
+
+        average_loading_plus_inference = 1.0 * \
+            total_loading_and_inference_time / total_frames
+        average_inference = 1.0*inference_time / total_frames
+
+        print(
+            f"average time to load and predict on an image: {average_loading_plus_inference}")
+        print(f"average time to predict on an image: {average_inference}")
 
     if args.mode == 'hardware-performance':
 
