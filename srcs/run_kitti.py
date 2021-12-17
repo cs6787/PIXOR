@@ -226,8 +226,8 @@ def make_test_video():
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument('--name', required=True, help="name of the experiment")
-    parser.add_argument('--model', required=True,
-                        help="file name of the model to run")
+    parser.add_argument('--weights', required=True,
+                        help="file path of weights to load")
 
     args = parser.parse_args()
 
