@@ -83,7 +83,6 @@ def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_r
     else:
         net.set_decode(True)
         teacher_net.set_decode(True)
-    
 
     cls_loss = 0
     loc_loss = 0
@@ -564,7 +563,6 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
             epoch + 1, time.time() - tic, val_metrics['loss']))
         print(val_metrics)
 
-
         # Save Checkpoint, implemented with early stopping if validation loss is too high
         # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
         if val_metrics["loss"] < best_loss:
@@ -576,6 +574,7 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
             else:
                 torch.save(net.state_dict(), model_path)
             print("Checkpoint saved at {}".format(model_path))
+            num_val_not_decreasing == 0
         else:
             num_val_not_decreasing += 1
             # early stopping
