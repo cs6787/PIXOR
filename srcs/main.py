@@ -980,12 +980,6 @@ if __name__ == "__main__":
         net.load_state_dict(torch.load(weights_path, map_location=device))
         print("Successfully loaded trained ckpt at {}".format(weights_path))
 
-        for mod_name, nn_mod in net.named_modules():
-
-            if isinstance(nn_mod, torch.nn.Conv2d):
-                if nn_mod.bias is not None:
-                    nn_mod = torch.nn.utils.prune.remove(nn_mod, name='bias')
-
         train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
                                                geometry=config['geometry'], frame_range=config['frame_range'])
 
