@@ -19,6 +19,11 @@ import torch.nn.utils.prune as prune
 import pandas as pd
 
 
+### MAIN FILE OF PIXOR NEURAL NETWORK ###
+### TO RUN AN EXPERIMENT, CALL ONE OF THE ARGUMENTS LISTED IN MAIN ###
+
+# Constructs and returns the base PIXOR model, the corresponding loss function,
+# optimizer, and learning rate scheduler
 def build_model(config, device, train=True):
     net = PIXOR(config['geometry'], config['use_bn'])
     loss_fn = CustomLoss(device, config, num_classes=1)
@@ -42,6 +47,8 @@ def build_model(config, device, train=True):
     return net, loss_fn, optimizer, scheduler
 
 
+# Constructs the distilled PIXOR models, specifiying which one using [distill].
+# Returns the model, corresponding loss function, optimizer, and learning rate scheduler
 def build_dist_model(config, device, train=True, distill="distill_layer"):
 
     if distill == "distill_layer":
@@ -72,6 +79,9 @@ def build_dist_model(config, device, train=True, distill="distill_layer"):
     return net, loss_fn, optimizer, scheduler
 
 
+# Evaluates a batch of data given in [loader] for distilled models. Needs the
+# teacher model [teacher_net] and distilled loss [loss_fn].
+# Returns various metrics and image predictions
 def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_range='all'):
 
     net.eval()
@@ -185,6 +195,8 @@ def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_r
     return metrics, precisions, recalls, log_images
 
 
+# Evaluates a batch of data in [loader] for a default model. Returns various
+# metrics and image predictions
 def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     net.eval()
     if config['mGPUs']:
@@ -282,6 +294,8 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     return metrics, precisions, recalls, log_images
 
 
+# Evaluates a set of data given by [loader]. Basically does the same thing
+# as eval_batch, but doesn't include as many predictions
 def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     net.eval()
     if config['mGPUs']:
@@ -342,6 +356,8 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     return metrics, precisions, recalls, log_images
 
 
+# Training loop for training a default model from scratch. This code
+# was originally written by Phillip Huang in his implementation of PIXOR.
 def train_orig(exp_name, device):
     # Load Hyperparameters
     config, learning_rate, batch_size, max_epochs = load_config(exp_name)
@@ -448,6 +464,7 @@ def train_orig(exp_name, device):
     print('Finished Training')
 
 
+# Training loop for a distilled modeled - requires a teacher model [teacher_net].
 def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
 
     df_logs = pd.DataFrame()
@@ -606,6 +623,7 @@ def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, con
     return df_logs
 
 
+# Training loop for a pruned model
 def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
 
     df_logs = pd.DataFrame()
@@ -841,6 +859,7 @@ def test(exp_name, device, image_id):
         print("nms time {:.3f}s".format(t_nms))
 
 
+# Prunes a model given a certain pruning method
 def prune_model(model, method="L1_unstructured", prune_amt=0.2):
 
     params_to_prune = []
@@ -865,6 +884,7 @@ def prune_model(model, method="L1_unstructured", prune_amt=0.2):
         )
 
 
+# main function call
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
@@ -959,6 +979,12 @@ if __name__ == "__main__":
 
         net.load_state_dict(torch.load(weights_path, map_location=device))
         print("Successfully loaded trained ckpt at {}".format(weights_path))
+
+        for mod_name, nn_mod in net.named_modules():
+
+            if isinstance(nn_mod, torch.nn.Conv2d):
+                if nn_mod.bias is not None:
+                    nn_mod = torch.nn.utils.prune.remove(nn_mod, name='bias')
 
         train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
                                                geometry=config['geometry'], frame_range=config['frame_range'])

@@ -5,12 +5,15 @@ import math
 from utils import maskFOV_on_BEV
 
 
+### DISTILLED LAYER PIXOR MODEL ###
+
 def conv3x3(in_planes, out_planes, stride=1, bias=False):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=bias)
 
 
+### RESIDUAL BLOCK ###
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -68,6 +71,7 @@ class Bottleneck(nn.Module):
         return out
 
 
+### BACKBONE BLOCK OF NETWORK ###
 class BackBone(nn.Module):
 
     def __init__(self, block, num_block, geom, use_bn=True):
@@ -165,7 +169,7 @@ class BackBone(nn.Module):
         return nn.Sequential(*layers)
 
 
-# Unlike the pixor paper, this Header block only contains two convolution layers
+### HEADER BLOCK OF NETWORK ###
 class Header_DIST(nn.Module):
 
     def __init__(self, use_bn=True):
@@ -177,10 +181,6 @@ class Header_DIST(nn.Module):
         self.bn1 = nn.BatchNorm2d(96)
         self.conv2 = conv3x3(96, 96, bias=bias)
         self.bn2 = nn.BatchNorm2d(96)
-        #self.conv3 = conv3x3(96, 96, bias=bias)
-        #self.bn3 = nn.BatchNorm2d(96)
-        #self.conv4 = conv3x3(96, 96, bias=bias)
-        #self.bn4 = nn.BatchNorm2d(96)
 
         self.clshead = conv3x3(96, 1, bias=True)
         self.reghead = conv3x3(96, 6, bias=True)
@@ -194,14 +194,6 @@ class Header_DIST(nn.Module):
         x = self.conv2(x)
         if self.use_bn:
             x = self.bn2(x)
-
-        #x = self.conv3(x)
-        # if self.use_bn:
-        #    x = self.bn3(x)
-
-        #x = self.conv4(x)
-        # if self.use_bn:
-        #    x = self.bn4(x)
 
         cls = torch.sigmoid(self.clshead(x))
         reg = self.reghead(x)
@@ -272,6 +264,7 @@ class Decoder(nn.Module):
         return decoded_reg
 
 
+### ACTUAL MODEL IMPLEMENTATION ###
 class PIXOR_DIST(nn.Module):
     '''
     The input of PIXOR nn module is a tensor of [batch_size, height, weight, channel]

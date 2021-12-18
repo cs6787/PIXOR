@@ -4,8 +4,8 @@ import torch.nn.functional as F
 import math
 from utils import maskFOV_on_BEV
 
-# in this model, we just reduce the number of channels for each input convolution by 4
 
+### DISTILLED CHANNEL PIXOR MODEL ###
 
 def conv3x3(in_planes, out_planes, stride=1, bias=False):
     """3x3 convolution with padding"""
@@ -13,6 +13,7 @@ def conv3x3(in_planes, out_planes, stride=1, bias=False):
                      padding=1, bias=bias)
 
 
+### RESIDUAL BLOCK ###
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -52,6 +53,7 @@ class Bottleneck(nn.Module):
         return out
 
 
+### BACKBONE BLOCK OF NETWORK ###
 class BackBone(nn.Module):
 
     def __init__(self, block, num_block, geom, use_bn=True):
@@ -133,6 +135,7 @@ class BackBone(nn.Module):
         return nn.Sequential(*layers)
 
 
+### HEADER BLOCK OF NETWORK ###
 class Header(nn.Module):
 
     def __init__(self, use_bn=True):
@@ -235,6 +238,7 @@ class Decoder(nn.Module):
         return decoded_reg
 
 
+### ACTUAL MODEL IMPLEMENTATION ###
 class PIXOR_DIST2(nn.Module):
     '''
     The input of PIXOR nn module is a tensor of [batch_size, height, weight, channel]

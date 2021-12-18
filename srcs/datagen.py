@@ -11,6 +11,10 @@ from utils import plot_bev, get_points_in_a_rotated_box, plot_label_map, trasfor
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
+
+### CREATES KITTI DATASET AND DATALOADERS ###
+
+
 #KITTI_PATH = '/home/autoronto/Kitti/object'
 # KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
 KITTI_PATH = '/media/jmoon/T7 Touch/KITTI'
@@ -285,6 +289,8 @@ class KITTI(Dataset):
         return velo_processed
 
 
+# Returns training and validation data loaders - main function used to
+# actually get our data
 def get_data_loader(batch_size, use_npy, geometry=None, frame_range=10000):
     train_dataset = KITTI(frame_range, use_npy=use_npy, train=True)
     if geometry is not None:
