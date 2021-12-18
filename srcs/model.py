@@ -43,7 +43,6 @@ class BasicBlock(nn.Module):
         return out
 
 
-
 class Bottleneck(nn.Module):
     expansion = 4
 
@@ -53,13 +52,14 @@ class Bottleneck(nn.Module):
         self.use_bn = use_bn
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=bias)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride, padding=1, bias=bias)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=stride, padding=1, bias=bias)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.conv3 = nn.Conv2d(planes, self.expansion*planes, kernel_size=1, bias=bias)
+        self.conv3 = nn.Conv2d(planes, self.expansion *
+                               planes, kernel_size=1, bias=bias)
         self.bn3 = nn.BatchNorm2d(self.expansion*planes)
         self.downsample = downsample
         self.relu = nn.ReLU(inplace=True)
-
 
     def forward(self, x):
         residual = x
@@ -81,6 +81,7 @@ class Bottleneck(nn.Module):
         out = self.relu(residual + out)
         return out
 
+
 class BackBone(nn.Module):
 
     def __init__(self, block, num_block, geom, use_bn=True):
@@ -95,7 +96,6 @@ class BackBone(nn.Module):
         self.bn2 = nn.BatchNorm2d(32)
         self.relu = nn.ReLU(inplace=True)
 
-
         # Block 2-5
         self.in_planes = 32
         self.block2 = self._make_layer(block, 24, num_blocks=num_block[0])
@@ -104,14 +104,18 @@ class BackBone(nn.Module):
         self.block5 = self._make_layer(block, 96, num_blocks=num_block[3])
 
         # Lateral layers
-        self.latlayer1 = nn.Conv2d(384, 196, kernel_size=1, stride=1, padding=0)
-        self.latlayer2 = nn.Conv2d(256, 128, kernel_size=1, stride=1, padding=0)
+        self.latlayer1 = nn.Conv2d(
+            384, 196, kernel_size=1, stride=1, padding=0)
+        self.latlayer2 = nn.Conv2d(
+            256, 128, kernel_size=1, stride=1, padding=0)
         self.latlayer3 = nn.Conv2d(192, 96, kernel_size=1, stride=1, padding=0)
 
         # Top-down layers
-        self.deconv1 = nn.ConvTranspose2d(196, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv1 = nn.ConvTranspose2d(
+            196, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
         p = 0 if geom['label_shape'][1] == 175 else 1
-        self.deconv2 = nn.ConvTranspose2d(128, 96, kernel_size=3, stride=2, padding=1, output_padding=(1, p))
+        self.deconv2 = nn.ConvTranspose2d(
+            128, 96, kernel_size=3, stride=2, padding=1, output_padding=(1, p))
 
     def forward(self, x):
         x = self.conv1(x)
@@ -150,7 +154,8 @@ class BackBone(nn.Module):
                                    kernel_size=1, stride=2, bias=True)
 
         layers = []
-        layers.append(block(self.in_planes, planes, stride=2, downsample=downsample))
+        layers.append(block(self.in_planes, planes,
+                      stride=2, downsample=downsample))
         self.in_planes = planes * block.expansion
         for i in range(1, num_blocks):
             layers.append(block(self.in_planes, planes, stride=1))
@@ -175,7 +180,6 @@ class BackBone(nn.Module):
         '''
         _, _, H, W = y.size()
         return F.upsample(x, size=(H, W), mode='bilinear') + y
-
 
 
 class Header(nn.Module):
@@ -218,6 +222,7 @@ class Header(nn.Module):
 
         return cls, reg
 
+
 class Decoder(nn.Module):
 
     def __init__(self, geom):
@@ -249,15 +254,18 @@ class Decoder(nn.Module):
             device = x.get_device()
 
         for i in range(6):
-            x[:, i, :, :] = x[:, i, :, :] * self.target_std_dev[i] + self.target_mean[i]
+            x[:, i, :, :] = x[:, i, :, :] * \
+                self.target_std_dev[i] + self.target_mean[i]
 
         cos_t, sin_t, dx, dy, log_w, log_l = torch.chunk(x, 6, dim=1)
         theta = torch.atan2(sin_t, cos_t)
         cos_t = torch.cos(theta)
         sin_t = torch.sin(theta)
 
-        x = torch.arange(self.geometry[2], self.geometry[3], self.grid_size, dtype=torch.float32, device=device)
-        y = torch.arange(self.geometry[0], self.geometry[1], self.grid_size, dtype=torch.float32, device=device)
+        x = torch.arange(self.geometry[2], self.geometry[3],
+                         self.grid_size, dtype=torch.float32, device=device)
+        y = torch.arange(self.geometry[0], self.geometry[1],
+                         self.grid_size, dtype=torch.float32, device=device)
         yy, xx = torch.meshgrid([y, x])
         centre_y = yy + dy
         centre_x = xx + dx
@@ -277,6 +285,7 @@ class Decoder(nn.Module):
 
         return decoded_reg
 
+
 class PIXOR(nn.Module):
     '''
     The input of PIXOR nn module is a tensor of [batch_size, height, weight, channel]
@@ -291,7 +300,7 @@ class PIXOR(nn.Module):
         self.corner_decoder = Decoder(geom)
         self.use_decode = decode
         self.cam_fov_mask = maskFOV_on_BEV(geom['label_shape'])
-        
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -299,7 +308,7 @@ class PIXOR(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-        
+
         prior = 0.01
         self.header.clshead.weight.data.fill_(-math.log((1.0-prior)/prior))
         self.header.clshead.bias.data.fill_(0)
@@ -310,11 +319,11 @@ class PIXOR(nn.Module):
         self.use_decode = decode
 
     def forward(self, x):
-        
+
         device = torch.device('cpu')
         if x.is_cuda:
             device = x.get_device()
-        
+
         # x = x.permute(0, 3, 1, 2)
         # Torch Takes Tensor of shape (Batch_size, channels, height, width)
 
@@ -334,7 +343,8 @@ class PIXOR(nn.Module):
 
         return pred
 
-def test_decoder(decode = True):
+
+def test_decoder(decode=True):
     geom = {
         "L1": -40.0,
         "L2": 40.0,
@@ -351,6 +361,7 @@ def test_decoder(decode = True):
     preds = net(torch.autograd.Variable(torch.randn(2, 800, 700, 36)))
 
     print("Predictions output size", preds.size())
+
 
 if __name__ == "__main__":
     test_decoder()

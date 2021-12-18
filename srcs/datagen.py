@@ -2,6 +2,7 @@
 Load pointcloud/labels from the KITTI dataset folder
 '''
 import os.path
+import sys
 import numpy as np
 import time
 import torch
@@ -10,10 +11,17 @@ from utils import plot_bev, get_points_in_a_rotated_box, plot_label_map, trasfor
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
+
+### CREATES KITTI DATASET AND DATALOADERS ###
+
+
 #KITTI_PATH = '/home/autoronto/Kitti/object'
 # KITTI_PATH = '/Users/petebuckman/Desktop/CS 6787 Final/KITTI'
-KITTI_PATH = '/media/jmoon/T7 Touch/KITTI/'
+KITTI_PATH = '/media/jmoon/T7 Touch/KITTI'
+#KITTI_PATH = '/Volumes/T7 Touch/KITTI/'
 #KITTI_PATH = 'KITTI'
+
+np.set_printoptions(threshold=sys.maxsize)
 
 
 class KITTI(Dataset):
@@ -44,13 +52,17 @@ class KITTI(Dataset):
         return len(self.image_sets)
 
     def __getitem__(self, item):
+        # gets the training example - (800, 700, 36)
         scan = self.load_velo_scan(item)
-        scan = torch.from_numpy(scan)
+        scan = torch.from_numpy(scan)  # turns scan from numpy to PyT tensor
+        # returns (200, 175, 7) numpy array of zeroes
         label_map, _ = self.get_label(item)
         self.reg_target_transform(label_map)
-        label_map = torch.from_numpy(label_map)
+        label_map = torch.from_numpy(label_map)  # turns scan into PyT tensor
+        # reordering shape for Pytorch functions (channels first)
         scan = scan.permute(2, 0, 1)
-        label_map = label_map.permute(2, 0, 1)
+        label_map = label_map.permute(2, 0, 1)  # reordering
+
         return scan, label_map, item
 
     def reg_target_transform(self, label_map):
@@ -70,9 +82,9 @@ class KITTI(Dataset):
         path = KITTI_PATH
 
         if train:
-            path = os.path.join(path, "train1000.txt")
+            path = os.path.join(path, "train5000.txt")
         else:
-            path = os.path.join(path, "val1000.txt")
+            path = os.path.join(path, "val5000.txt")
 
         with open(path, 'r') as f:
             lines = f.readlines()  # get rid of \n symbol
@@ -169,6 +181,12 @@ class KITTI(Dataset):
                 is a car or one of the 'dontcare' (truck,van,etc) object
 
         '''
+        """
+        RETURNS A 200 * 175 * 7 TENSOR REPRESENTING THE EXPECTED OUTPUT 
+        - USES FUNCTION UPDATE_LABEL_MAP TO DO SO
+        - FOLLOWS YOLO EXPECTED OUTPUT SCHEME - EACH PIXEL RETURNS AN EXPECTED BLOCK
+        """
+
         index = self.image_sets[index]
         f_name = (6-len(index)) * '0' + index + '.txt'
         label_path = os.path.join(KITTI_PATH, 'training', 'label_2', f_name)
@@ -190,6 +208,7 @@ class KITTI(Dataset):
                         corners, reg_target = self.get_corners(bbox)
                         self.update_label_map(label_map, corners, reg_target)
                         label_list.append(corners)
+
         return label_map, label_list
 
     def get_rand_velo(self):
@@ -200,6 +219,9 @@ class KITTI(Dataset):
 
     def load_velo_scan(self, item):
         """Helper method to parse velodyne binary files into a list of scans."""
+        """Turns the velodyne scan at index [item] (in list of training data)
+        into an (800, 700, 36) numpy array. use_npy specifies using either a 
+        given .npy file or using the LidarProcess.c file to do so. """
         filename = self.velo[item]
 
         if self.use_npy:
@@ -215,6 +237,9 @@ class KITTI(Dataset):
 
     def load_velo(self):
         """Load velodyne [x,y,z,reflectance] scan data from binary files."""
+        """Given the specified trainign examples in KITTI/train.txt, creates a 
+        list of file names that point to the relevant velodyne scans, and stores
+        in 'self.velo'. """
         # Find all the Velodyne files
 
         velo_files = []
@@ -264,19 +289,21 @@ class KITTI(Dataset):
         return velo_processed
 
 
+# Returns training and validation data loaders - main function used to
+# actually get our data
 def get_data_loader(batch_size, use_npy, geometry=None, frame_range=10000):
     train_dataset = KITTI(frame_range, use_npy=use_npy, train=True)
     if geometry is not None:
         train_dataset.geometry = geometry
     train_dataset.load_velo()
     train_data_loader = DataLoader(
-        train_dataset, shuffle=True, batch_size=batch_size, num_workers=3)
+        train_dataset, shuffle=True, batch_size=batch_size, num_workers=0)
     val_dataset = KITTI(frame_range, use_npy=use_npy, train=False)
     if geometry is not None:
         val_dataset.geometry = geometry
     val_dataset.load_velo()
     val_data_loader = DataLoader(
-        val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=3)
+        val_dataset, shuffle=False, batch_size=batch_size * 4, num_workers=0)
 
     print("------------------------------------------------------------------")
     return train_data_loader, val_data_loader

@@ -1,3 +1,4 @@
+from pandas.core.frame import DataFrame
 import torch
 import torch.nn as nn
 import numpy as np
@@ -7,12 +8,22 @@ import random
 from torch.multiprocessing import Pool
 
 from loss import CustomLoss
+from dist_loss import CustomDistLoss
 from datagen import get_data_loader
 from model import PIXOR
+from dist_model import PIXOR_DIST
+from dist_model2 import PIXOR_DIST2
 from utils import get_model_name, load_config, get_logger, plot_bev, plot_label_map, plot_pr_curve, get_bev
 from postprocess import filter_pred, compute_matches, compute_ap
+import torch.nn.utils.prune as prune
+import pandas as pd
 
 
+### MAIN FILE OF PIXOR NEURAL NETWORK ###
+### TO RUN AN EXPERIMENT, CALL ONE OF THE ARGUMENTS LISTED IN MAIN ###
+
+# Constructs and returns the base PIXOR model, the corresponding loss function,
+# optimizer, and learning rate scheduler
 def build_model(config, device, train=True):
     net = PIXOR(config['geometry'], config['use_bn'])
     loss_fn = CustomLoss(device, config, num_classes=1)
@@ -36,6 +47,156 @@ def build_model(config, device, train=True):
     return net, loss_fn, optimizer, scheduler
 
 
+# Constructs the distilled PIXOR models, specifiying which one using [distill].
+# Returns the model, corresponding loss function, optimizer, and learning rate scheduler
+def build_dist_model(config, device, train=True, distill="distill_layer"):
+
+    if distill == "distill_layer":
+        net = PIXOR_DIST(config['geometry'], config['use_bn'])
+
+    if distill == "distill_conv":
+        net = PIXOR_DIST2(config['geometry'], config['use_bn'])
+
+    loss_fn = CustomDistLoss(device, config, num_classes=1)
+
+    if torch.cuda.device_count() <= 1:
+        config['mGPUs'] = False
+    if config['mGPUs']:
+        print("using multi gpu")
+        net = nn.DataParallel(net)  # parallelizing net
+
+    net = net.to(device)
+    loss_fn = loss_fn.to(device)
+
+    if not train:
+        return net, loss_fn
+
+    optimizer = torch.optim.SGD(net.parameters(
+    ), lr=config['learning_rate'], momentum=config['momentum'], weight_decay=config['weight_decay'])
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones=config['lr_decay_at'], gamma=0.1)
+
+    return net, loss_fn, optimizer, scheduler
+
+
+# Evaluates a batch of data given in [loader] for distilled models. Needs the
+# teacher model [teacher_net] and distilled loss [loss_fn].
+# Returns various metrics and image predictions
+def eval_batch_distill(config, net, teacher_net, loss_fn, loader, device, eval_range='all'):
+
+    net.eval()
+    teacher_net.eval()  # even though I'm pretty sure it's already in eval mode
+
+    if config['mGPUs']:
+        net.module.set_decode(True)
+        teacher_net.module.set_decode(True)
+    else:
+        net.set_decode(True)
+        teacher_net.set_decode(True)
+
+    cls_loss = 0
+    loc_loss = 0
+    cls_teacher_loss = 0
+    loc_teacher_loss = 0
+    all_scores = []
+    all_matches = []
+    log_images = []
+    gts = 0
+    preds = 0
+    t_fwd = 0
+    t_nms = 0
+
+    log_img_list = random.sample(range(len(loader.dataset)), 10)
+
+    with torch.no_grad():
+        for i, data in enumerate(loader):
+            tic = time.time()
+            input, label_map, image_id = data
+            input = input.to(device)
+            label_map = label_map.to(device)
+            tac = time.time()
+            predictions = net(input)
+            t_fwd += time.time() - tac
+
+            # getting the teacher predictions, no need to get forward times for this set
+            teacher_predictions = teacher_net(input)
+
+            loss, cls, loc, cls_teacher, loc_teacher = loss_fn(
+                predictions, teacher_predictions, label_map)
+            cls_loss += cls
+            loc_loss += loc
+            cls_teacher_loss += cls_teacher
+            loc_teacher_loss += loc_teacher
+            t_fwd += (time.time() - tic)
+
+            toc = time.time()
+            # Parallel post-processing
+            predictions = list(torch.split(predictions.cpu(), 1, dim=0))
+            batch_size = len(predictions)
+            # with Pool(processes=3) as pool:
+            #    preds_filtered = pool.starmap(
+            #        filter_pred, [(config, pred) for pred in predictions])
+
+            preds_filtered = []
+            for pred in predictions:
+                preds_filtered.append(filter_pred(config, pred))
+
+            t_nms += (time.time() - toc)
+            args = []
+
+            for j in range(batch_size):
+                _, label_list = loader.dataset.get_label(image_id[j].item())
+                corners, scores = preds_filtered[j]
+                gts += len(label_list)
+                preds += len(scores)
+                all_scores.extend(list(scores))
+                if image_id[j] in log_img_list:
+                    input_np = input[j].cpu().permute(1, 2, 0).numpy()
+                    pred_image = get_bev(input_np, corners)
+                    log_images.append(pred_image)
+
+                arg = (np.array(label_list), corners, scores)
+                args.append(arg)
+
+            # Parallel compute matchesi
+
+            with Pool(processes=3) as pool:
+                matches = pool.starmap(compute_matches, args)
+
+            for j in range(batch_size):
+                all_matches.extend(list(matches[j][1]))
+
+            # print(time.time() -tic)
+
+    all_scores = np.array(all_scores)
+    all_matches = np.array(all_matches)
+    sort_ids = np.argsort(all_scores)
+    all_matches = all_matches[sort_ids[::-1]]
+
+    metrics = {}
+    try:
+        AP, precisions, recalls, precision, recall = compute_ap(
+            all_matches, gts, preds)
+    except:
+        AP, precisions, recalls, precision, recall = [-1]*5
+
+    metrics['AP'] = AP
+    metrics['Precision'] = precision
+    metrics['Recall'] = recall
+    metrics['Forward Pass Time'] = t_fwd/len(loader.dataset)
+    metrics['Postprocess Time'] = t_nms/len(loader.dataset)
+
+    cls_loss = cls_loss / len(loader)
+    loc_loss = loc_loss / len(loader)
+    cls_teacher_loss = cls_teacher_loss / len(loader)
+    loc_teacher_loss = loc_teacher_loss / len(loader)
+    metrics['loss'] = cls_loss + loc_loss + cls_teacher_loss + loc_teacher_loss
+
+    return metrics, precisions, recalls, log_images
+
+
+# Evaluates a batch of data in [loader] for a default model. Returns various
+# metrics and image predictions
 def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     net.eval()
     if config['mGPUs']:
@@ -73,11 +234,17 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             # Parallel post-processing
             predictions = list(torch.split(predictions.cpu(), 1, dim=0))
             batch_size = len(predictions)
-            with Pool(processes=3) as pool:
-                preds_filtered = pool.starmap(
-                    filter_pred, [(config, pred) for pred in predictions])
+            # with Pool(processes=3) as pool:
+            #    preds_filtered = pool.starmap(
+            #        filter_pred, [(config, pred) for pred in predictions])
+
+            preds_filtered = []
+            for pred in predictions:
+                preds_filtered.append(filter_pred(config, pred))
+
             t_nms += (time.time() - toc)
             args = []
+
             for j in range(batch_size):
                 _, label_list = loader.dataset.get_label(image_id[j].item())
                 corners, scores = preds_filtered[j]
@@ -100,15 +267,20 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
             for j in range(batch_size):
                 all_matches.extend(list(matches[j][1]))
 
-            #print(time.time() -tic)
+            # print(time.time() -tic)
+
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
     sort_ids = np.argsort(all_scores)
     all_matches = all_matches[sort_ids[::-1]]
 
     metrics = {}
-    AP, precisions, recalls, precision, recall = compute_ap(
-        all_matches, gts, preds)
+    try:
+        AP, precisions, recalls, precision, recall = compute_ap(
+            all_matches, gts, preds)
+    except:
+        AP, precisions, recalls, precision, recall = [-1]*5
+
     metrics['AP'] = AP
     metrics['Precision'] = precision
     metrics['Recall'] = recall
@@ -122,6 +294,8 @@ def eval_batch(config, net, loss_fn, loader, device, eval_range='all'):
     return metrics, precisions, recalls, log_images
 
 
+# Evaluates a set of data given by [loader]. Basically does the same thing
+# as eval_batch, but doesn't include as many predictions
 def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     net.eval()
     if config['mGPUs']:
@@ -148,10 +322,9 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
 
     with torch.no_grad():
         for image_id in img_list:
-            #tic = time.time()
-            num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = \
-                eval_one(net, loss_fn, config, loader,
-                         image_id, device, plot=False)
+            # tic = time.time()
+            num_gt, num_pred, scores, pred_image, pred_match, loss, t_forward, t_nms = eval_one(net, loss_fn, config, loader,
+                                                                                                image_id, device, plot=False)
             gts += num_gt
             preds += num_pred
             loss_sum += loss
@@ -163,7 +336,7 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
 
             if image_id in log_img_list:
                 log_images.append(pred_image)
-            #print(time.time() - tic)
+            # print(time.time() - tic)
 
     all_scores = np.array(all_scores)
     all_matches = np.array(all_matches)
@@ -183,7 +356,9 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
     return metrics, precisions, recalls, log_images
 
 
-def train(exp_name, device):
+# Training loop for training a default model from scratch. This code
+# was originally written by Phillip Huang in his implementation of PIXOR.
+def train_orig(exp_name, device):
     # Load Hyperparameters
     config, learning_rate, batch_size, max_epochs = load_config(exp_name)
 
@@ -221,7 +396,6 @@ def train(exp_name, device):
     best_loss = 10E8
     num_val_not_decreasing = 0
     for epoch in range(st_epoch, max_epochs):
-
         start_time = time.time()
 
         train_loss = 0
@@ -265,7 +439,7 @@ def train(exp_name, device):
                 #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
 
             step += 1
-            #print(time.time() - tic)
+            # print(time.time() - tic)
 
         # Record Training Loss
         print('train_loss', train_loss)
@@ -275,6 +449,7 @@ def train(exp_name, device):
         print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
             epoch + 1, time.time() - start_time, train_loss))
 
+<<<<<<< HEAD
         # # Run Validation
         # if (epoch + 1) % 2 == 0:
         #     tic = time.time()
@@ -298,6 +473,19 @@ def train(exp_name, device):
             epoch + 1, time.time() - tic, val_metrics['loss']))
         print(val_metrics)
                                 
+=======
+        # Run Validation every 2 epochs
+        if (epoch + 1) % 2 == 0:
+            tic = time.time()
+            val_metrics, _, _, log_images = eval_batch(
+                config, net, loss_fn, test_data_loader, device)
+            for tag, value in val_metrics.items():
+                val_logger.scalar_summary(tag, value, epoch + 1)
+            val_logger.image_summary('Predictions', log_images, epoch + 1)
+            print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+                epoch + 1, time.time() - tic, val_metrics['loss']))
+
+>>>>>>> 195389f10ab9a66ff741e5f9275016912fa18221
         # Save Checkpoint
         #if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
         if val_metrics["loss"] < best_loss:
@@ -318,6 +506,298 @@ def train(exp_name, device):
     
     # torch.save(net.state_dict(), model_path)
     print('Finished Training')
+
+
+# Training loop for a distilled modeled - requires a teacher model [teacher_net].
+def train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
+
+    df_logs = pd.DataFrame()
+
+    # Dataset and DataLoader - using same data for distilled model (re training on same data)
+    train_data_loader, test_data_loader = get_data_loader(
+        batch_size, config['use_npy'], geometry=config['geometry'], frame_range=config['frame_range'])
+
+    # Tensorboard Logger
+    train_logger = get_logger(config, 'train')
+    val_logger = get_logger(config, 'val')
+
+    # setting the starting epoch
+    if config['resume_training']:
+        st_epoch = config['resume_from']
+    else:
+        st_epoch = 0
+
+    # setting the initial step
+    step = 1 + st_epoch * len(train_data_loader)
+    # cross entropy loss - calculated adding the cross entropy loss wrt data and teacher model
+    cls_loss = 0
+    # regression loss - calculated adding regression loss wrt data and teacher model
+    loc_loss = 0
+    # cross entropy loss wrt to the teacher model
+    cls_teacher_loss = 0
+    # regression loss wrt to the teacher model
+    loc_teacher_loss = 0
+
+    best_loss = 100000000000
+    num_val_not_decreasing = 0
+
+    # training for a certain number of epochs
+    for epoch in range(st_epoch, st_epoch + max_epochs):
+
+        print("Epoch number: " + str(epoch + 1))
+
+        start_time = time.time()  # starting timer
+
+        train_loss = 0  # iteratively calculating training loss
+
+        net.train()  # setting net to training mode (vs net.eval())
+
+        # whether to set decode to false if using mGPUs
+        if config['mGPUs']:
+            net.module.set_decode(False)
+            teacher_net.module.set_decode(False)
+        else:
+            net.set_decode(False)
+            teacher_net.set_decode(False)
+
+        for input, label_map, image_id, in train_data_loader:
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+            label_map = label_map.to(device)
+            optimizer.zero_grad()
+
+            # Forward
+            predictions = net(input)
+            teacher_predictions = teacher_net(input)
+
+            loss, cls, loc, cls_teacher, loc_teacher = loss_fn(
+                predictions, teacher_predictions, label_map)
+
+            loss.backward()
+            optimizer.step()
+
+            # keeping sum total of all the losses - will average later
+            cls_loss += cls
+            loc_loss += loc
+            cls_teacher_loss += cls_teacher
+            loc_teacher_loss += loc_teacher
+            train_loss += loss.item()
+
+            # logging cls_loss and loc_loss every certain number of steps
+            if step % config['log_every'] == 0:
+                cls_loss = cls_loss / config['log_every']
+                loc_loss = loc_loss / config['log_every']
+                cls_teacher_loss = cls_teacher_loss / config['log_every']
+                loc_teacher_loss = loc_teacher_loss / config['log_every']
+                train_logger.scalar_summary('cls_loss', cls_loss, step)
+                train_logger.scalar_summary('loc_loss', loc_loss, step)
+                train_logger.scalar_summary(
+                    'cls_teacher_loss', cls_teacher_loss, step)
+                train_logger.scalar_summary(
+                    'loc_teacher_loss', loc_teacher_loss, step)
+                cls_loss = 0
+                loc_loss = 0
+                cls_teacher_loss = 0
+                loc_teacher_loss = 0
+
+            # increasing # of steps
+            step += 1
+
+        scheduler.step()  # stepping the learning rate (after the first optimizer step)
+
+        # Record Training Loss
+        train_loss = train_loss / len(train_data_loader)
+        train_logger.scalar_summary('loss', train_loss, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
+            epoch + 1, time.time() - start_time, train_loss))
+
+        # Run Validation
+        # if (epoch + 1) % 2 == 0:
+        tic = time.time()
+        val_metrics, _, _, log_images = eval_batch_distill(
+            config, net, teacher_net, loss_fn, test_data_loader, device)
+        for tag, value in val_metrics.items():
+            val_logger.scalar_summary(tag, value, epoch + 1)
+        val_logger.image_summary('Predictions', log_images, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+            epoch + 1, time.time() - tic, val_metrics['loss']))
+        print(val_metrics)
+
+        # Save Checkpoint, implemented with early stopping if validation loss is too high
+        # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
+        if val_metrics["loss"] < best_loss:
+            best_loss = val_metrics["loss"]
+            model_path = get_model_name(
+                config, exp_name=exp_name, epoch=epoch + 1)
+            if config['mGPUs']:
+                torch.save(net.module.state_dict(), model_path)
+            else:
+                torch.save(net.state_dict(), model_path)
+            print("Checkpoint saved at {}".format(model_path))
+            num_val_not_decreasing = 0
+        else:
+            num_val_not_decreasing += 1
+            # early stopping
+            if num_val_not_decreasing == 5:
+                print(
+                    f"early stopping on epoch {str(epoch)} for experiement {exp_name}")
+                break
+
+    df_logs = pd.concat(
+        [
+            df_logs,
+            pd.DataFrame(
+                {
+                    "exp_name": exp_name,
+                    "AP": val_metrics["AP"],
+                    "Precision": val_metrics["Precision"],
+                    "Recall": val_metrics["Recall"],
+                    "Forward Pass Time": val_metrics["Forward Pass Time"],
+                    "Postprocess Time": val_metrics["Postprocess Time"],
+                    "loss": val_metrics["loss"],
+                    "train_loss": train_loss,
+                }, index=[1]
+            ),
+        ]
+    )
+
+    print('Finished Training')
+
+    return df_logs
+
+
+# Training loop for a pruned model
+def train(net, device, config, learning_rate, batch_size, max_epochs, exp_name=None):
+
+    df_logs = pd.DataFrame()
+
+    # Dataset and DataLoader
+    train_data_loader, test_data_loader = get_data_loader(batch_size, config['use_npy'],
+                                                          geometry=config['geometry'], frame_range=config['frame_range'])
+
+    # Tensorboard Logger
+    train_logger = get_logger(config, exp_name=exp_name, mode='train')
+    val_logger = get_logger(config, exp_name=exp_name, mode='val')
+
+    if config['resume_training']:
+        st_epoch = config['resume_from']
+    else:
+        # writefile(config, 'train_loss.csv', 'iteration, cls_loss, loc_loss\n')
+        # writefile(config, 'val_loss.csv', 'epoch, cls_loss, loc_loss\n')
+        st_epoch = 0
+
+    step = 1 + st_epoch * len(train_data_loader)
+    cls_loss = 0
+    loc_loss = 0
+
+    best_loss = 100000000000
+    num_val_not_decreasing = 0
+
+    for epoch in range(st_epoch, st_epoch + max_epochs):
+
+        start_time = time.time()
+
+        train_loss = 0
+
+        net.train()
+        if config['mGPUs']:
+            net.module.set_decode(False)
+        else:
+            net.set_decode(False)
+        scheduler.step()
+
+        for input, label_map, image_id in train_data_loader:
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+            label_map = label_map.to(device)
+            optimizer.zero_grad()
+
+            # Forward
+            predictions = net(input)
+            loss, cls, loc = loss_fn(predictions, label_map)
+            loss.backward()
+            optimizer.step()
+            cls_loss += cls
+            loc_loss += loc
+            train_loss += loss.item()
+
+            if step % config['log_every'] == 0:
+                cls_loss = cls_loss / config['log_every']
+                loc_loss = loc_loss / config['log_every']
+                train_logger.scalar_summary('cls_loss', cls_loss, step)
+                train_logger.scalar_summary('loc_loss', loc_loss, step)
+                cls_loss = 0
+                loc_loss = 0
+
+                # for tag, value in net.named_parameters():
+                #    tag = tag.replace('.', '/')
+                #    train_logger.histo_summary(tag, value.data.cpu().numpy(), step)
+                #    train_logger.histo_summary(tag + '/grad', value.grad.data.cpu().numpy(), step)
+
+            step += batch_size
+            # print(time.time() - tic)
+
+        # Record Training Loss
+        train_loss = train_loss / len(train_data_loader)
+        train_logger.scalar_summary('loss', train_loss, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
+            epoch + 1, time.time() - start_time, train_loss))
+
+        # Run Validation
+        # if (epoch + 1) % 2 == 0:
+        tic = time.time()
+        val_metrics, _, _, log_images = eval_batch(
+            config, net, loss_fn, test_data_loader, device)
+        for tag, value in val_metrics.items():
+            val_logger.scalar_summary(tag, value, epoch + 1)
+        val_logger.image_summary('Predictions', log_images, epoch + 1)
+        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
+            epoch + 1, time.time() - tic, val_metrics['loss']))
+        print(val_metrics)
+
+        # Save Checkpoint
+        # if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
+        if val_metrics["loss"] < best_loss:
+            num_val_not_decreasing = 0
+            best_loss = val_metrics["loss"]
+            model_path = get_model_name(
+                config, exp_name=exp_name, epoch=epoch + 1)
+            if config['mGPUs']:
+                torch.save(net.module.state_dict(), model_path)
+            else:
+                torch.save(net.state_dict(), model_path)
+            print("Checkpoint saved at {}".format(model_path))
+        else:
+            num_val_not_decreasing += 1
+            # early stopping
+            if num_val_not_decreasing == 4:
+                print(
+                    f"early stopping on epoch {str(epoch)} for experiement {exp_name}")
+                break
+
+    df_logs = pd.concat(
+        [
+            df_logs,
+            pd.DataFrame(
+                {
+                    "exp_name": exp_name,
+                    "AP": val_metrics["AP"],
+                    "Precision": val_metrics["Precision"],
+                    "Recall": val_metrics["Recall"],
+                    "Forward Pass Time": val_metrics["Forward Pass Time"],
+                    "Postprocess Time": val_metrics["Postprocess Time"],
+                    "loss": val_metrics["loss"],
+                    "train_loss": train_loss,
+                }, index=[1]
+            ),
+        ]
+    )
+
+    print('Finished Training')
+
+    return df_logs
 
 
 def eval_one(net, loss_fn, config, loader, image_id, device, plot=False, verbose=False):
@@ -423,16 +903,43 @@ def test(exp_name, device, image_id):
         print("nms time {:.3f}s".format(t_nms))
 
 
+# Prunes a model given a certain pruning method
+def prune_model(model, method="L1_unstructured", prune_amt=0.2):
+
+    params_to_prune = []
+
+    for mod_name, nn_mod in model.named_modules():
+
+        if isinstance(nn_mod, torch.nn.Conv2d):
+            if nn_mod.bias is not None:
+                params_to_prune.append((nn_mod, "bias"))
+
+    if method == "L1_unstructured":
+        prune.global_unstructured(
+            params_to_prune,
+            pruning_method=prune.L1Unstructured,
+            amount=prune_amt,
+        )
+    elif method == "random_unstructured":
+        prune.global_unstructured(
+            params_to_prune,
+            pruning_method=prune.RandomUnstructured,
+            amount=prune_amt,
+        )
+
+
+# main function call
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument(
-        'mode', choices=['train', 'val', 'test'], help='name of the experiment')
+        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'distill', 'hardware-performance', 'hardware-performance-distill'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
     parser.add_argument('--test_id', type=int, default=25,
                         help="id of the image to test")
+    parser.add_argument('--weights', type=str, help='path of weights to load')
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -441,12 +948,168 @@ if __name__ == "__main__":
     print("Using device", device)
 
     if args.mode == 'train':
-        train(args.name, device)
+        train_orig(args.name, device)
+
+        # Load Hyperparameters
+        # config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        # train(device, config, learning_rate, batch_size, max_epochs)
     if args.mode == 'val':
         if args.eval_range is None:
             args.eval_range = 'all'
         experiment(args.name, device, eval_range=args.eval_range, plot=False)
     if args.mode == 'test':
         test(args.name, device, image_id=args.test_id)
+
+    if args.mode == "distill":
+        # loading model config
+        config, learning_rate, batch_size, max_epochs = load_config(args.name)
+        # loading teacher config
+        default_config, _, _, _ = load_config('default')
+
+        # building model
+        net, loss_fn, optimizer, scheduler = build_dist_model(
+            config, device, train=True, distill=args.name)
+
+        # loading the teacher model ('34epoch')
+        teacher_net, _ = build_model(default_config, device, train=False)
+        teacher_net.load_state_dict(torch.load(
+            "experiments/default/34epoch", map_location=device))
+
+        teacher_net.eval()  # setting to evaluate mode
+
+        df_logs = train_distilled(net, loss_fn, optimizer, scheduler, teacher_net, device, config,
+                                  learning_rate, batch_size, max_epochs, exp_name=args.name)
+
+        df_logs.to_csv(args.name + "_experiment_logs.csv")
+
+    if args.mode == 'prune-fine-tune':
+
+        # Load Hyperparameters
+        config, learning_rate, batch_size, _ = load_config(args.name)
+        config["resume_training"] = True
+        config["max_epochs"] = 5
+
+        df_logs = pd.DataFrame()
+        for prune_method in ["random_unstructured", "L1_unstructured"]:
+            # 2,4,8,16, and 32 pruning reductation as recommended in the state of pruning paper
+            for prune_amt in [0, 0.5, 1-0.25, 1-0.125, 1-0.0625, 1-0.03125]:
+
+                # Model
+                net, loss_fn, optimizer, scheduler = build_model(
+                    config, device, train=True)
+
+                if config['resume_training']:
+                    saved_ckpt_path = get_model_name(config)
+                    net.load_state_dict(torch.load(
+                        saved_ckpt_path, map_location=device))
+                    print("Successfully loaded trained ckpt at {}".format(
+                        saved_ckpt_path))
+
+                prune_model(net, method=prune_method, prune_amt=prune_amt)
+
+                df_logs_temp = train(net, device, config, learning_rate, batch_size,
+                                     config["max_epochs"], exp_name=prune_method + "_" + str(prune_amt))
+
+                df_logs = pd.concat([df_logs, df_logs_temp])
+
+        df_logs.to_csv("prune_experiment_logs.csv")
+
+    if args.mode == 'hardware-performance-distill':
+        config, _, _, _ = load_config(args.name)
+        net, _, _, _ = build_dist_model(
+            config, device, train=True, distill=args.name)
+
+        weights_path = args.weights
+
+        net.load_state_dict(torch.load(weights_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(weights_path))
+
+        train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
+                                               geometry=config['geometry'], frame_range=config['frame_range'])
+
+        inference_time = 0
+        total_frames = 0
+
+        net.eval()
+        net.set_decode(False)
+
+        loading_and_inference_time_start = time.time()
+
+        for input, _, _ in train_data_loader:
+
+            total_frames += len(input)
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+
+            inference_time_start = time.time()
+            predictions = net(input)
+            inference_time += time.time() - inference_time_start
+
+        total_loading_and_inference_time = time.time() - loading_and_inference_time_start
+
+        average_loading_plus_inference = 1.0 * \
+            total_loading_and_inference_time / total_frames
+        average_inference = 1.0*inference_time / total_frames
+
+        print(
+            f"average time to load and predict on an image: {average_loading_plus_inference}")
+        print(f"average time to predict on an image: {average_inference}")
+
+    if args.mode == 'hardware-performance':
+
+        config, _, _, _ = load_config(args.name)
+
+        net, _, _, _ = build_model(config, device, train=True)
+
+        weights_path = args.weights
+
+        saved_ckpt_path = get_model_name(config)
+        net.load_state_dict(torch.load(saved_ckpt_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(saved_ckpt_path))
+
+        prune_model(net)
+
+        net.load_state_dict(torch.load(
+            weights_path, map_location=device))
+        print("Successfully loaded trained ckpt at {}".format(weights_path))
+
+        for mod_name, nn_mod in net.named_modules():
+
+            if isinstance(nn_mod, torch.nn.Conv2d):
+                if nn_mod.bias is not None:
+                    nn_mod = torch.nn.utils.prune.remove(nn_mod, name='bias')
+
+        train_data_loader, _ = get_data_loader(config['batch_size'], config['use_npy'],
+                                               geometry=config['geometry'], frame_range=config['frame_range'])
+
+        inference_time = 0
+        total_frames = 0
+
+        net.eval()
+        net.set_decode(False)
+
+        loading_and_inference_time_start = time.time()
+
+        for input, _, _ in train_data_loader:
+
+            total_frames += len(input)
+
+            tic = time.time()  # print('step', step)
+            input = input.to(device)
+
+            inference_time_start = time.time()
+            predictions = net(input)
+            inference_time += time.time() - inference_time_start
+
+        total_loading_and_inference_time = time.time() - loading_and_inference_time_start
+
+        average_loading_plus_inference = 1.0 * \
+            total_loading_and_inference_time / total_frames
+        average_inference = 1.0*inference_time / total_frames
+
+        print(
+            f"average time to load and predict on an image: {average_loading_plus_inference}")
+        print(f"average time to predict on an image: {average_inference}")
 
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......

@@ -53,11 +53,11 @@ def maskFOV_on_BEV(shape, fov=88.0):
     return in_fov
 
 
-def get_logger(config, mode='train'):
+def get_logger(config, exp_name = None, mode='train'):
     folder = os.path.join('logs', config['name'], mode)
     if not os.path.exists(folder):
         os.makedirs(folder)
-    return logger.Logger(folder)
+    return logger.Logger(folder, exp_name=exp_name)
 
 
 def get_bev(velo_array, label_list=None, scores=None):

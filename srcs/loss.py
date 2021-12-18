@@ -23,8 +23,8 @@ class CustomLoss(nn.Module):
         gamma = 2
 
         x = torch.sigmoid(x)
-        x_t = x * (2 * y - 1) + (1 - y) # x_t = x     if label = 1
-                                        # x_t = 1 -x  if label = 0
+        x_t = x * (2 * y - 1) + (1 - y)  # x_t = x     if label = 1
+        # x_t = 1 -x  if label = 0
 
         alpha_t = torch.ones_like(x_t) * alpha
         alpha_t = alpha_t * (2 * y - 1) + (1 - y)
@@ -34,10 +34,13 @@ class CustomLoss(nn.Module):
         return loss.mean()
 
     def cross_entropy(self, x, y):
-        val = F.binary_cross_entropy_with_logits(input=x, target=y, reduction='elementwise_mean')
-        # print(val)
-        return val
+        '''
+        dimensions of x = [batch_size, 1, 200, 175]
+        dimensions of y = [batch_size, 1, 200, 175]
+        '''
 
+        # reduction used to be 'elementwise_mean', but that is no deprecated
+        return F.binary_cross_entropy(input=x, target=y, reduction='mean')
 
     def forward(self, preds, targets):
         '''Compute loss between (loc_preds, loc_targets) and (cls_preds, cls_targets).
@@ -53,6 +56,9 @@ class CustomLoss(nn.Module):
 
         batch_size = targets.size(0)
         image_size = targets.size(1) * targets.size(2)
+
+        # cls_targets, preds - dimensions [batch_size, 1, 200, 175]
+        # loc_targets, preds - dimensions [batch_size, 6, 200, 175]
         cls_targets, loc_targets = targets.split([1, 6], dim=1)
         if preds.size(1) == 7:
             cls_preds, loc_preds = preds.split([1, 6], dim=1)
@@ -61,10 +67,9 @@ class CustomLoss(nn.Module):
         ################################################################
         # cls_loss = self.focal_loss(cls_preds, cls_targets)
         ################################################################
-        # cls_preds = torch.sigmoid(cls_preds)
-        # print('cls_preds', cls_preds)
-        # print('cls_preds after sigmoid:',torch.sigmoid(cls_preds))
+        # calculating cross entropy loss
         cls_loss = self.cross_entropy(cls_preds, cls_targets) * self.alpha
+        # getting cross entropy loss as int instead of tensor
         cls = cls_loss.item()
         ################################################################
         # reg_loss = SmoothL1Loss(loc_preds, loc_targets)
@@ -74,7 +79,9 @@ class CustomLoss(nn.Module):
         # print('los_loss', loc_loss)
         # print('cls_loss', cls_loss)
         if pos_pixels > 0:
-            loc_loss = F.smooth_l1_loss(cls_targets * loc_preds, loc_targets, reduction='sum') / pos_pixels * self.beta
+            # onlt computing a loss where cls_targets are non-zero - positive locations only?
+            loc_loss = F.smooth_l1_loss(
+                cls_targets * loc_preds, loc_targets, reduction='sum') / pos_pixels * self.beta
             loc = loc_loss.item()
             loss = loc_loss + cls_loss
         else:
@@ -88,7 +95,8 @@ class CustomLoss(nn.Module):
 def test():
     loss = CustomLoss()
     pred = torch.sigmoid(torch.randn(1, 2, 2, 3))
-    label = torch.tensor([[[[1, 0.4, 0.5], [0, 0.2, 0.5]], [[0, 0.1, 0.1], [1, 0.8, 0.4]]]])
+    label = torch.tensor(
+        [[[[1, 0.4, 0.5], [0, 0.2, 0.5]], [[0, 0.1, 0.1], [1, 0.8, 0.4]]]])
     loss = loss(pred, label)
     print(loss)
 
