@@ -358,7 +358,7 @@ def eval_dataset(config, net, loss_fn, loader, device, e_range='all'):
 
 # Training loop for training a default model from scratch. This code
 # was originally written by Phillip Huang in his implementation of PIXOR.
-def train_orig(exp_name, device):
+def train_orig(exp_name, device, amp=False):
     # Load Hyperparameters
     config, learning_rate, batch_size, max_epochs = load_config(exp_name)
 
@@ -414,13 +414,21 @@ def train_orig(exp_name, device):
             label_map = label_map.to(device)
             optimizer.zero_grad()
 
-            # Forward
-            with torch.cuda.amp.autocast():
+            # Use Automatic Mixed Precision
+            if (amp):
+                with torch.cuda.amp.autocast():
+                    predictions = net(input)
+                    loss, cls, loc = loss_fn(predictions, label_map)
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+            # Use float32
+            else: 
                 predictions = net(input)
                 loss, cls, loc = loss_fn(predictions, label_map)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+                loss.backward()
+                optimizer.step()
+            
             cls_loss += cls
             loc_loss += loc
             train_loss += loss.item()
@@ -449,31 +457,6 @@ def train_orig(exp_name, device):
         print("Epoch {}|Time {:.3f}|Training Loss: {:.5f}".format(
             epoch + 1, time.time() - start_time, train_loss))
 
-<<<<<<< HEAD
-        # # Run Validation
-        # if (epoch + 1) % 2 == 0:
-        #     tic = time.time()
-        #     val_metrics, _, _, log_images = eval_batch(
-        #         config, net, loss_fn, test_data_loader, device)
-        #     for tag, value in val_metrics.items():
-        #         val_logger.scalar_summary(tag, value, epoch + 1)
-        #     val_logger.image_summary('Predictions', log_images, epoch + 1)
-        #     print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
-        #         epoch + 1, time.time() - tic, val_metrics['loss']))
-        
-        # Run Validation
-        #if (epoch + 1) % 2 == 0:
-        tic = time.time()
-        val_metrics, _, _, log_images = eval_batch(
-            config, net, loss_fn, test_data_loader, device)
-        for tag, value in val_metrics.items():
-            val_logger.scalar_summary(tag, value, epoch + 1)
-        val_logger.image_summary('Predictions', log_images, epoch + 1)
-        print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
-            epoch + 1, time.time() - tic, val_metrics['loss']))
-        print(val_metrics)
-                                
-=======
         # Run Validation every 2 epochs
         if (epoch + 1) % 2 == 0:
             tic = time.time()
@@ -485,7 +468,6 @@ def train_orig(exp_name, device):
             print("Epoch {}|Time {:.3f}|Validation Loss: {:.5f}".format(
                 epoch + 1, time.time() - tic, val_metrics['loss']))
 
->>>>>>> 195389f10ab9a66ff741e5f9275016912fa18221
         # Save Checkpoint
         #if (epoch + 1) == (st_epoch + max_epochs) or (epoch + 1) % config['save_every'] == 0:
         if val_metrics["loss"] < best_loss:
@@ -933,7 +915,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='PIXOR custom implementation')
     parser.add_argument(
-        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'distill', 'hardware-performance', 'hardware-performance-distill'], help='name of the experiment')
+        '--mode', choices=['train', 'val', 'test', 'prune-fine-tune', 'distill', 'hardware-performance', 'hardware-performance-distill', 'amp'], help='name of the experiment')
     parser.add_argument('--name', required=True, help="name of the experiment")
     parser.add_argument('--device', default='cpu', help='device to train on')
     parser.add_argument('--eval_range', type=int, help="range of evaluation")
@@ -949,7 +931,7 @@ if __name__ == "__main__":
 
     if args.mode == 'train':
         train_orig(args.name, device)
-
+    
         # Load Hyperparameters
         # config, learning_rate, batch_size, max_epochs = load_config(args.name)
         # train(device, config, learning_rate, batch_size, max_epochs)
@@ -1111,5 +1093,7 @@ if __name__ == "__main__":
         print(
             f"average time to load and predict on an image: {average_loading_plus_inference}")
         print(f"average time to predict on an image: {average_inference}")
-
+    # Automatic Mixed Precision
+    if args.mode == 'amp':
+        train_orig(args.name, device, amp=True)
     # before launching the program! CUDA_VISIBLE_DEVICES=0, 1 python main.py .......
